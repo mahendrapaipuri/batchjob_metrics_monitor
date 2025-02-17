@@ -18,7 +18,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.24
 	github.com/prometheus/client_golang v1.20.5
 	github.com/prometheus/common v0.62.0
-	github.com/prometheus/exporter-toolkit v0.13.2
+	github.com/prometheus/exporter-toolkit v0.14.0
 	github.com/prometheus/procfs v0.15.1
 	github.com/stmcginnis/gofish v0.20.0
 	github.com/stretchr/testify v1.10.0
