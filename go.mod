@@ -6,7 +6,7 @@ toolchain go1.23.2
 
 require (
 	github.com/alecthomas/kingpin/v2 v2.4.0
-	github.com/cilium/ebpf v0.17.2
+	github.com/cilium/ebpf v0.17.3
 	github.com/containerd/cgroups/v3 v3.0.5
 	github.com/go-chi/httprate v0.14.1
 	github.com/golang-migrate/migrate/v4 v4.18.2
