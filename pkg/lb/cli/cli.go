@@ -8,7 +8,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http/httputil"
+	"log/slog"
+	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -43,6 +45,9 @@ var (
 	ErrMissingURLs = errors.New("missing TSDB and Pyroscope URL(s) for backend(s)")
 )
 
+// RetryContextKey is the key used to set context value for retry.
+type RetryContextKey struct{}
+
 // CEEMSLBAppConfig contains the configuration of CEEMS load balancer app.
 type CEEMSLBAppConfig struct {
 	LB       CEEMSLBConfig                  `yaml:"ceems_lb"`
@@ -72,7 +77,7 @@ func (c *CEEMSLBAppConfig) Validate() error {
 			return ErrMissingIDs
 		}
 
-		if len(backend.TSDBURLs) == 0 && len(backend.PyroURLs) == 0 {
+		if len(backend.TSDBs) == 0 && len(backend.Pyros) == 0 {
 			return ErrMissingURLs
 		}
 
@@ -299,26 +304,15 @@ func (lb *CEEMSLoadBalancer) Main() error {
 
 		// Add backend servers to serverPool
 		for _, backend := range config.LB.Backends {
-			for _, backendURL := range backendURLs(lbType, backend) {
-				webURL, err := url.Parse(backendURL)
-				if err != nil {
-					// If we dont unwrap original error, the URL string will be printed to log which
-					// might contain sensitive passwords
-					logger.Error("Could not parse backend server URL", "backend_type", lbType, "err", errors.Unwrap(err))
-
-					continue
-				}
-
-				rp := httputil.NewSingleHostReverseProxy(webURL)
-
-				backendServer, err := lb_backend.New(lbType, webURL, rp, logger.With("backend_type", lbType))
+			for _, serverCfg := range backendURLs(lbType, backend) {
+				backendServer, err := lb_backend.New(lbType, serverCfg, logger.With("backend_type", lbType))
 				if err != nil {
 					logger.Error("Could not set up backend server", "backend_type", lbType, "err", errors.Unwrap(err))
 
 					continue
 				}
 
-				rp.ErrorHandler = frontend.ErrorHandler(webURL, backendServer, lbs[lbType], logger.With("backend_type", lbType))
+				backendServer.ReverseProxy().ErrorHandler = errorHandler(backendServer, lbs[lbType], logger.With("backend_type", lbType))
 
 				managers[lbType].Add(backend.ID, backendServer)
 			}
@@ -341,7 +335,7 @@ func (lb *CEEMSLoadBalancer) Main() error {
 
 		go func() {
 			defer wg.Done()
-			frontend.Monitor(ctx, managers[lbType], logger.With("backend_type", lbType))
+			monitor(ctx, managers[lbType], logger.With("backend_type", lbType))
 		}()
 
 		// Initializing the server in a goroutine so that
@@ -384,11 +378,11 @@ func (lb *CEEMSLoadBalancer) Main() error {
 func backendTypes(config *CEEMSLBAppConfig) []base.LBType {
 	var types []base.LBType
 	for _, backend := range config.LB.Backends {
-		if len(backend.TSDBURLs) > 0 && !slices.Contains(types, base.PromLB) {
+		if len(backend.TSDBs) > 0 && !slices.Contains(types, base.PromLB) {
 			types = append(types, base.PromLB)
 		}
 
-		if len(backend.PyroURLs) > 0 && !slices.Contains(types, base.PyroLB) {
+		if len(backend.Pyros) > 0 && !slices.Contains(types, base.PyroLB) {
 			types = append(types, base.PyroLB)
 		}
 	}
@@ -397,13 +391,115 @@ func backendTypes(config *CEEMSLBAppConfig) []base.LBType {
 }
 
 // backendURLs returns slice of backend URLs based on backend type `t`.
-func backendURLs(t base.LBType, backend base.Backend) []string {
+func backendURLs(t base.LBType, backend base.Backend) []base.ServerConfig {
 	switch t {
 	case base.PromLB:
-		return backend.TSDBURLs
+		return backend.TSDBs
 	case base.PyroLB:
-		return backend.PyroURLs
+		return backend.Pyros
 	}
 
 	return nil
+}
+
+// allowRetry checks if a failed request can be retried.
+func allowRetry(r *http.Request) bool {
+	if _, ok := r.Context().Value(RetryContextKey{}).(bool); ok {
+		return false
+	}
+
+	return true
+}
+
+// errorHandler returns a custom error handler for reverse proxy.
+func errorHandler(backendServer lb_backend.Server, lb frontend.LoadBalancer, logger *slog.Logger) func(http.ResponseWriter, *http.Request, error) {
+	return func(writer http.ResponseWriter, request *http.Request, err error) {
+		logger.Error("Failed to handle the request", "host", backendServer.URL().Host, "err", err)
+		backendServer.SetAlive(false)
+
+		// If already retried the request, return error
+		if !allowRetry(request) {
+			logger.Info("Max retry attempts reached, terminating", "address", request.RemoteAddr, "path", request.URL.Path)
+			http.Error(writer, "Service not available", http.StatusServiceUnavailable)
+
+			return
+		}
+
+		// Retry request and set context value so that we dont retry for second time
+		logger.Info("Attempting retry", "address", request.RemoteAddr, "path", request.URL.Path)
+		lb.Serve(
+			writer,
+			request.WithContext(
+				context.WithValue(request.Context(), RetryContextKey{}, true),
+			),
+		)
+	}
+}
+
+// monitor checks the backend servers health.
+func monitor(ctx context.Context, manager serverpool.Manager, logger *slog.Logger) {
+	t := time.NewTicker(time.Second * 20)
+
+	logger.Info("Starting health checker")
+
+	for {
+		// This will ensure that we will run the method as soon as go routine
+		// starts instead of waiting for ticker to tick
+		go healthCheck(ctx, manager, logger)
+
+		select {
+		case <-t.C:
+			continue
+		case <-ctx.Done():
+			logger.Info("Received Interrupt. Stopping health checker")
+
+			return
+		}
+	}
+}
+
+// healthCheck monitors the status of all backend servers.
+func healthCheck(ctx context.Context, manager serverpool.Manager, logger *slog.Logger) {
+	aliveChannel := make(chan bool, 1)
+
+	for id, backends := range manager.Backends() {
+		for _, backend := range backends {
+			requestCtx, stop := context.WithTimeout(ctx, 10*time.Second)
+			defer stop()
+
+			status := "up"
+
+			go isAlive(requestCtx, aliveChannel, backend.URL(), logger)
+
+			select {
+			case <-ctx.Done():
+				logger.Info("Gracefully shutting down health check")
+
+				return
+			case alive := <-aliveChannel:
+				backend.SetAlive(alive)
+
+				if !alive {
+					status = "down"
+				}
+			}
+			logger.Debug("Health check", "id", id, "backend", backend.String(), "status", status)
+		}
+	}
+}
+
+// isAlive returns the status of backend server with a channel.
+func isAlive(ctx context.Context, aliveChannel chan bool, u *url.URL, logger *slog.Logger) {
+	var d net.Dialer
+
+	conn, err := d.DialContext(ctx, "tcp", u.Host)
+	if err != nil {
+		logger.Debug("Backend unreachable", "backend", u.Redacted(), "err", err)
+		aliveChannel <- false
+
+		return
+	}
+
+	_ = conn.Close()
+	aliveChannel <- true
 }

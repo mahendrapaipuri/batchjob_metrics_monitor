@@ -57,7 +57,7 @@ func (c *tsdbConfig) validate() error {
 // Embed TSDB struct into our TSDBUpdater struct.
 type tsdbUpdater struct {
 	config *tsdbConfig
-	*tsdb.TSDB
+	*tsdb.Client
 }
 
 // Mutex lock.

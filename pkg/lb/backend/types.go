@@ -3,6 +3,7 @@ package backend
 import (
 	"errors"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"time"
 )
@@ -20,5 +21,6 @@ type Server interface {
 	String() string
 	ActiveConnections() int
 	RetentionPeriod() time.Duration
+	ReverseProxy() *httputil.ReverseProxy
 	Serve(w http.ResponseWriter, r *http.Request)
 }

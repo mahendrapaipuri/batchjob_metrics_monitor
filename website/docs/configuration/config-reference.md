@@ -891,34 +891,39 @@ id: <idname>
 # List of TSDBs for this cluster. Load balancing between these TSDBs will be 
 # made based on the strategy chosen.
 #
-# TLS is not supported for backends. CEEMS LB supports TLS and TLS terminates
-# at the LB and requests are proxied to backends on HTTP. 
-#
-# LB and backend servers are meant to be in the same DMZ so that we do not need
-# to encrypt communications. Backends however support basic auth and they can 
-# be configured in URL with usual syntax.
-#
-# An example of configuring the basic auth username and password with backend
-# - http://alice:password@localhost:9090
-#
-tsdb_urls: 
-  [ - <host> ]
+tsdb: 
+  [ - <server_config> ]
 
 # List of Pyroscope servers for this cluster. Load balancing between these servers 
 # will be made based on the strategy chosen.
 #
-# TLS is not supported for backends. CEEMS LB supports TLS and TLS terminates
-# at the LB and requests are proxied to backends on HTTP. 
+pyroscope:
+  [ - <server_config> ]
+```
+
+### `<server_config>`
+
+A `server_config` contains TSDB/Pyroscope server configuration.
+
+```yaml
+# Backend server configuration
 #
-# LB and backend servers are meant to be in the same DMZ so that we do not need
-# to encrypt communications. Backends however support basic auth and they can 
-# be configured in URL with usual syntax.
+web: <web_client_config>
+
+# A list of labels that must be filtered before proxying
+# response back to the client.
 #
-# An example of configuring the basic auth username and password with backend
-# - http://alice:password@localhost:4040
+# This is useful for Openstack and/or k8s case when clients should not
+# be able to retrieve compute node or hypervisor related information like
+# node address, node name, etc.
 #
-pyroscope_urls:
-  [ - <host> ]
+# All the labels listed here will be filtered from the response before sending
+# it to the clients.
+#
+# IMPORTANT: Currently `filter_labels` is only supported for TSDB backend type.
+#
+filter_labels: 
+  [ - <string> ]
 ```
 
 ## `<web_client_config>`

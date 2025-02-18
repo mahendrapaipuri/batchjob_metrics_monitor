@@ -4,12 +4,20 @@ ceems_lb:
   strategy: resource-based
   backends:
     - id: slurm-0
-      tsdb_urls: 
-        - http://prometheus:password@localhost:9090
+      tsdb: 
+        - web:
+            url: http://localhost:9090
+            basic_auth:
+              username: prometheus
+              password: password
 
     - id: slurm-1
-      tsdb_urls: 
-        - http://prometheus:password@localhost:9090
+      tsdb: 
+        - web:
+            url: http://localhost:9090
+            basic_auth:
+              username: prometheus
+              password: password
 
 ceems_api_server:
   data:

@@ -1,2 +1,2 @@
-{"status":"success","data":{"resultType":"vector","result":[]}}
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"uuid":"1479763"},"value":[12345,"21.22149394"],"values":null}]}}
 received profiles for  {service_name="1479763"}

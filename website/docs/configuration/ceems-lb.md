@@ -42,18 +42,22 @@ ceems_lb:
   strategy: resource-based
   backends:
     - id: slurm-0
-      tsdb_urls: 
-        - http://localhost:9090
-      pyroscope_urls:
-        - http://localhost:4040
+      tsdb: 
+        - web:
+            url: http://localhost:9090
+      pyroscope:
+        - web:
+            url: http://localhost:4040
 
     - id: slurm-1
-      tsdb_urls: 
-        - http://localhost:9090
+      tsdb: 
+        - web:
+            url: http://localhost:9090
 
     - id: slurm-2
-      pyroscope_urls: 
-        - http://localhost:4040
+      pyroscope: 
+        - web:
+            url: http://localhost:4040
 ```
 
 - `strategy`: Load balancing strategy. Besides classical `round-robin` and
@@ -61,14 +65,19 @@ ceems_lb:
 In the  `resource-based` strategy, the query will be proxied to the TSDB instance
 that has the data based on the time period in the query.
 - `backends`: A list of objects describing each TSDB backend.
-  - `backends.id`: It is **important**
+  - `backends[0].id`: It is **important**
      that the `id` in the backend must be the same `id` used in the
      [Clusters Configuration](./ceems-api-server.md#clusters-configuration). This
      is how CEEMS LB will know which cluster to target.
-  - `backends.tsdb_urls`: A list of TSDB servers that scrape metrics from the
+  - `backends[0].tsdb`: A list of TSDB servers that scrape metrics from the
      cluster identified by `id`.
-  - `backends.pyroscope_urls`: A list of Pyroscope servers that store profiling data from the
+        - `backends[0].tsdb.web`: Client HTTP configuration of TSDB
+        - `backends[0].tsdb.filter_labels`: A list of labels to filter before sending
+        response to the client. Useful to filter hypervisor or compute node specific
+        information for Openstack and k8s clusters.
+  - `backends[0].pyroscope`: A list of Pyroscope servers that store profiling data from the
      cluster identified by `id`.
+        -`backends[0].pyroscope.web`: Client HTTP configuration of Pyroscope
 
 :::warning[WARNING]
 
@@ -161,14 +170,18 @@ ceems_lb:
   strategy: resource-based
   backends:
     - id: slurm-0
-      tsdb_urls: 
-        - http://tsdb-0
-        - http://tsdb-0-replica
+      tsdb: 
+        - web:
+            url : http://tsdb-0
+        - web:
+            url: http://tsdb-0-replica
 
     - id: slurm-1
-      tsdb_urls: 
-        - http://tsdb-1
-        - http://tsdb-1-replica
+      tsdb: 
+        - web:
+            url: http://tsdb-1
+        - web:
+            url: http://tsdb-1-replica
 
 ```
 
@@ -359,14 +372,18 @@ ceems_lb:
   strategy: resource-based
   backends:
     - id: slurm-0
-      tsdb_urls: 
-        - http://tsdb-0
-        - http://tsdb-0-replica
+      tsdb: 
+        - web:
+            url: http://tsdb-0
+        - web:
+            url: http://tsdb-0-replica
 
     - id: os-0
-      tsdb_urls: 
-        - http://tsdb-1
-        - http://tsdb-1-replica
+      tsdb: 
+        - web:
+            url: http://tsdb-1
+        - web:
+            url: http://tsdb-1-replica
 ```
 
 This config assumes `tsdb-0` is replicating data to `tsdb-0-replica`,

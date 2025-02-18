@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/mahendrapaipuri/ceems/internal/security"
 	"github.com/mahendrapaipuri/ceems/pkg/api/base"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,7 +16,8 @@ import (
 
 func TestPreflightsCLI(t *testing.T) {
 	manager := slurmScheduler{
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+		securityContexts: make(map[string]*security.SecurityContext),
 	}
 	err := preflightsCLI(&manager)
 	require.Error(t, err)

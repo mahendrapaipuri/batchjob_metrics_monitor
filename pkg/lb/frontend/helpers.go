@@ -9,19 +9,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"math"
-	"net"
 	"net/http"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
-	"github.com/mahendrapaipuri/ceems/pkg/lb/backend"
-	"github.com/mahendrapaipuri/ceems/pkg/lb/serverpool"
+	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -38,62 +34,6 @@ var (
 	minTimeFormatted = MinTime.Format(time.RFC3339Nano)
 	maxTimeFormatted = MaxTime.Format(time.RFC3339Nano)
 )
-
-// AllowRetry checks if a failed request can be retried.
-func AllowRetry(r *http.Request) bool {
-	if _, ok := r.Context().Value(RetryContextKey{}).(bool); ok {
-		return false
-	}
-
-	return true
-}
-
-// Monitor checks the backend servers health.
-func Monitor(ctx context.Context, manager serverpool.Manager, logger *slog.Logger) {
-	t := time.NewTicker(time.Second * 20)
-
-	logger.Info("Starting health checker")
-
-	for {
-		// This will ensure that we will run the method as soon as go routine
-		// starts instead of waiting for ticker to tick
-		go healthCheck(ctx, manager, logger)
-
-		select {
-		case <-t.C:
-			continue
-		case <-ctx.Done():
-			logger.Info("Received Interrupt. Stopping health checker")
-
-			return
-		}
-	}
-}
-
-// ErrorHandler returns a custom error handler for reverse proxy.
-func ErrorHandler(u *url.URL, backendServer backend.Server, lb LoadBalancer, logger *slog.Logger) func(http.ResponseWriter, *http.Request, error) {
-	return func(writer http.ResponseWriter, request *http.Request, err error) {
-		logger.Error("Failed to handle the request", "host", u.Host, "err", err)
-		backendServer.SetAlive(false)
-
-		// If already retried the request, return error
-		if !AllowRetry(request) {
-			logger.Info("Max retry attempts reached, terminating", "address", request.RemoteAddr, "path", request.URL.Path)
-			http.Error(writer, "Service not available", http.StatusServiceUnavailable)
-
-			return
-		}
-
-		// Retry request and set context value so that we dont retry for second time
-		logger.Info("Attempting retry", "address", request.RemoteAddr, "path", request.URL.Path)
-		lb.Serve(
-			writer,
-			request.WithContext(
-				context.WithValue(request.Context(), RetryContextKey{}, true),
-			),
-		)
-	}
-}
 
 // Set query params into request's context and return new request.
 func setQueryParams(r *http.Request, queryParams *ReqParams) *http.Request {
@@ -144,8 +84,10 @@ func parseTSDBRequest(p *ReqParams, r *http.Request) error {
 	}
 
 	// Parse TSDB's query in request query params
-	if val := clonedReq.FormValue(targetQueryParam); val != "" {
-		parseReqParams(p, val)
+	if vals, ok := clonedReq.Form[targetQueryParam]; ok {
+		for _, val := range vals {
+			parseReqParams(p, val)
+		}
 	}
 
 	// Parse TSDB's start query in request query params
@@ -179,21 +121,62 @@ func parsePyroRequest(p *ReqParams, r *http.Request) error {
 	// clone body to existing request
 	r.Body = io.NopCloser(bytes.NewReader(body))
 
-	// Read body into request data
-	data := querierv1.SelectMergeStacktracesRequest{}
-	if err := proto.Unmarshal(body, &data); err != nil {
-		return fmt.Errorf("failed to umarshall request body: %w", err)
-	}
+	var start int64
 
-	// Parse Pyroscope's LabelSelector in request data
-	if val := data.GetLabelSelector(); val != "" {
-		parseReqParams(p, val)
+	// Read body into request data based on resource
+	switch {
+	case strings.HasSuffix(r.URL.Path, "SelectMergeStacktraces"):
+		// Read body into request data
+		data := querierv1.SelectMergeStacktracesRequest{}
+		if err := proto.Unmarshal(body, &data); err != nil {
+			return fmt.Errorf("failed to umarshall request body: %w", err)
+		}
+
+		// Parse Pyroscope's LabelSelector in request data
+		if val := data.GetLabelSelector(); val != "" {
+			parseReqParams(p, val)
+		}
+
+		// Get start time of query
+		start = data.GetStart()
+	case strings.HasSuffix(r.URL.Path, "LabelNames"):
+		// Read body into request data
+		data := typesv1.LabelNamesRequest{}
+		if err := proto.Unmarshal(body, &data); err != nil {
+			return fmt.Errorf("failed to umarshall request body: %w", err)
+		}
+
+		// Parse Pyroscope's LabelSelector in request data
+		if vals := data.GetMatchers(); vals != nil {
+			for _, val := range vals {
+				parseReqParams(p, val)
+			}
+		}
+
+		// Get start time of query
+		start = data.GetStart()
+	case strings.HasSuffix(r.URL.Path, "LabelValues"):
+		// Read body into request data
+		data := typesv1.LabelValuesRequest{}
+		if err := proto.Unmarshal(body, &data); err != nil {
+			return fmt.Errorf("failed to umarshall request body: %w", err)
+		}
+
+		// Parse Pyroscope's LabelSelector in request data
+		if vals := data.GetMatchers(); vals != nil {
+			for _, val := range vals {
+				parseReqParams(p, val)
+			}
+		}
+
+		// Get start time of query
+		start = data.GetStart()
 	}
 
 	// Parse Pyroscope's start query in request query params
 	// The times are already in milliseconds and so we need to
 	// convert it to seconds before setting it to struct.
-	if start := data.GetStart(); start == 0 {
+	if start == 0 {
 		p.queryPeriod = 0 * time.Second
 		p.time = time.Now().UTC().UnixMilli()
 	} else {
@@ -274,50 +257,4 @@ func parseTime(s string) (time.Time, error) {
 	}
 
 	return time.Time{}, fmt.Errorf("cannot parse %q to a valid timestamp", s)
-}
-
-// healthCheck monitors the status of all backend servers.
-func healthCheck(ctx context.Context, manager serverpool.Manager, logger *slog.Logger) {
-	aliveChannel := make(chan bool, 1)
-
-	for id, backends := range manager.Backends() {
-		for _, backend := range backends {
-			requestCtx, stop := context.WithTimeout(ctx, 10*time.Second)
-			defer stop()
-
-			status := "up"
-
-			go isAlive(requestCtx, aliveChannel, backend.URL(), logger)
-
-			select {
-			case <-ctx.Done():
-				logger.Info("Gracefully shutting down health check")
-
-				return
-			case alive := <-aliveChannel:
-				backend.SetAlive(alive)
-
-				if !alive {
-					status = "down"
-				}
-			}
-			logger.Debug("Health check", "id", id, "backend", backend.String(), "status", status)
-		}
-	}
-}
-
-// isAlive returns the status of backend server with a channel.
-func isAlive(ctx context.Context, aliveChannel chan bool, u *url.URL, logger *slog.Logger) {
-	var d net.Dialer
-
-	conn, err := d.DialContext(ctx, "tcp", u.Host)
-	if err != nil {
-		logger.Debug("Backend unreachable", "backend", u.Redacted(), "err", err)
-		aliveChannel <- false
-
-		return
-	}
-
-	_ = conn.Close()
-	aliveChannel <- true
 }

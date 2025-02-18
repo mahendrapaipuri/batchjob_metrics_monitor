@@ -6,14 +6,15 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httputil"
 	"net/url"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/mahendrapaipuri/ceems/pkg/api/models"
 	"github.com/mahendrapaipuri/ceems/pkg/lb/backend"
+	"github.com/mahendrapaipuri/ceems/pkg/lb/base"
 	"github.com/mahendrapaipuri/ceems/pkg/tsdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,15 +24,39 @@ var rbIDs = []string{"rb0", "rb1"}
 
 func dummyServer(retention string) *httptest.Server {
 	// Start test server
-	expected := tsdb.Response[any]{
+	expectedConfig := tsdb.Response[any]{
+		Status: "success",
+		Data: map[string]string{
+			"yaml": "global:\n  scrape_interval: 15s\n  scrape_timeout: 10s",
+		},
+	}
+
+	expectedFlags := tsdb.Response[any]{
+		Status: "success",
+		Data: map[string]interface{}{
+			"query.lookback-delta": "5m",
+			"query.max-samples":    "50000000",
+			"query.timeout":        "2m",
+		},
+	}
+
+	expectedRuntimeInfo := tsdb.Response[any]{
 		Status: "success",
 		Data: map[string]string{
 			"storageRetention": retention,
 		},
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "runtimeinfo") {
-			if err := json.NewEncoder(w).Encode(&expected); err != nil {
+		if strings.HasSuffix(r.URL.Path, "config") {
+			if err := json.NewEncoder(w).Encode(&expectedConfig); err != nil {
+				w.Write([]byte("KO"))
+			}
+		} else if strings.HasSuffix(r.URL.Path, "flags") {
+			if err := json.NewEncoder(w).Encode(&expectedFlags); err != nil {
+				w.Write([]byte("KO"))
+			}
+		} else if strings.HasSuffix(r.URL.Path, "runtimeinfo") {
+			if err := json.NewEncoder(w).Encode(&expectedRuntimeInfo); err != nil {
 				w.Write([]byte("KO"))
 			}
 		} else {
@@ -67,8 +92,9 @@ func TestResourceBasedLB(t *testing.T) {
 
 			backendURLs[id][i] = backendURL
 
-			rp := httputil.NewSingleHostReverseProxy(backendURL)
-			backend := backend.NewTSDB(backendURL, rp, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			backend, err := backend.NewTSDB(base.ServerConfig{Web: models.WebConfig{URL: backendURL.String()}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			require.NoError(t, err)
+
 			manager.Add(id, backend)
 			backends[id][i] = backend
 		}

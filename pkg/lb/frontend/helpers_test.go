@@ -13,6 +13,7 @@ import (
 	"time"
 
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
+	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -248,12 +249,14 @@ func TestParseTSDBQueryParams(t *testing.T) {
 
 func TestParsePyroQueryParams(t *testing.T) {
 	tests := []struct {
-		message *querierv1.SelectMergeStacktracesRequest
-		uuids   []string
-		start   int64
-		rmIDs   string
+		resource string
+		message  any
+		uuids    []string
+		start    int64
+		rmIDs    string
 	}{
 		{
+			resource: "SelectMergeStacktraces",
 			message: &querierv1.SelectMergeStacktracesRequest{
 				LabelSelector: `{service_name="123"}`,
 				Start:         1735209190,
@@ -262,6 +265,7 @@ func TestParsePyroQueryParams(t *testing.T) {
 			start: 1735209000,
 		},
 		{
+			resource: "SelectMergeStacktraces",
 			message: &querierv1.SelectMergeStacktracesRequest{
 				LabelSelector: `{service_name="123", ceems_id="default"}`,
 				Start:         1735209190,
@@ -270,22 +274,53 @@ func TestParsePyroQueryParams(t *testing.T) {
 			rmIDs: "default",
 			start: 1735209000,
 		},
+		{
+			resource: "LabelNames",
+			message: &typesv1.LabelNamesRequest{
+				Matchers: []string{`{__profile_type__="process_cpu:cpu:nanoseconds:cpu:nanoseconds", service_name="123", ceems_id="default"}`},
+				Start:    1735209000,
+			},
+			uuids: []string{"123"},
+			rmIDs: "default",
+			start: 1735209000,
+		},
+		{
+			resource: "LabelValues",
+			message: &typesv1.LabelValuesRequest{
+				Matchers: []string{`{__profile_type__="process_cpu:cpu:nanoseconds:cpu:nanoseconds", service_name="123", ceems_id="default"}`},
+				Start:    1735209000,
+			},
+			uuids: []string{"123"},
+			rmIDs: "default",
+			start: 1735209000,
+		},
 	}
 
 	for _, test := range tests {
+		var data []byte
+
+		var err error
 		// Query params
-		data, err := proto.Marshal(test.message)
+		switch {
+		case test.resource == "SelectMergeStacktraces":
+			data, err = proto.Marshal(test.message.(*querierv1.SelectMergeStacktracesRequest))
+		case test.resource == "LabelNames":
+			data, err = proto.Marshal(test.message.(*typesv1.LabelNamesRequest))
+		case test.resource == "LabelValues":
+			data, err = proto.Marshal(test.message.(*typesv1.LabelValuesRequest))
+		}
+
 		require.NoError(t, err)
 
-		req, err := http.NewRequest(http.MethodPost, "http://localhost:9090", bytes.NewBuffer(data)) //nolint:noctx
+		req, err := http.NewRequest(http.MethodPost, "http://localhost:4040/"+test.resource, bytes.NewBuffer(data)) //nolint:noctx
 		require.NoError(t, err)
 
 		p := &ReqParams{}
 		err = parsePyroRequest(p, req)
 		require.NoError(t, err)
 
-		assert.Equal(t, test.uuids, p.uuids)
-		assert.Equal(t, test.rmIDs, p.clusterID)
-		assert.Equal(t, test.start, p.time)
+		assert.Equal(t, test.uuids, p.uuids, test.resource)
+		assert.Equal(t, test.rmIDs, p.clusterID, test.resource)
+		assert.Equal(t, test.start, p.time, test.resource)
 	}
 }

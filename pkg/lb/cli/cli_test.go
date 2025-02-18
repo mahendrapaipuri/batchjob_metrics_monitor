@@ -80,10 +80,12 @@ ceems_lb:
   strategy: "round-robin"
   backends:
     - id: "default"
-      tsdb_urls:
-        - %[1]s
-      pyroscope_urls:
-        - %[1]s`
+      tsdb:
+        - web:
+           url: %[1]s
+      pyroscope:
+        - web:
+           url: %[1]s`
 
 	configFile := fmt.Sprintf(configFileTmpl, server.URL)
 	configFilePath := makeConfigFile(configFile, tmpDir)
@@ -131,10 +133,12 @@ ceems_lb:
   strategy: "round-robin"
   backends:
     - id: "default"
-      tsdb_urls:
-        - localhost:8000
-      pyroscope_urls:
-	    - localhost:9000`
+      tsdb:
+        - web:
+           url: localhost:8000
+      pyroscope:
+	    - web:
+           url: localhost:9000`
 
 	configFilePath := makeConfigFile(configFile, tmpDir)
 
@@ -173,8 +177,9 @@ func TestCEEMSLBMissingIDs(t *testing.T) {
 ceems_lb:
   strategy: "round-robin"
   backends:
-    - tsdb_urls:
-        - http://localhost:9090
+    - tsdb:
+        - web:
+            url: http://localhost:9090
 `
 
 	configFilePath := makeConfigFile(configFile, tmpDir)
@@ -209,8 +214,9 @@ ceems_lb:
   strategy: "round-robin"
   backends:
     - id: "default"
-      tsdb_urls:
-        - http://localhost:9090
+      tsdb:
+        - web:
+            url: http://localhost:9090
 
 clusters:
   - id: "default-1"`

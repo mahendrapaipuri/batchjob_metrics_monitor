@@ -1,58 +1,53 @@
 package backend
 
 import (
-	"encoding/base64"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/mahendrapaipuri/ceems/pkg/lb/base"
+	"github.com/prometheus/common/config"
 )
 
 // pyroServer implements a given backend Pyroscope server.
 type pyroServer struct {
-	url             *url.URL
-	alive           bool
-	mux             sync.RWMutex
-	connections     int
-	reverseProxy    *httputil.ReverseProxy
-	basicAuthHeader string
-	client          *http.Client
-	logger          *slog.Logger
+	url          *url.URL
+	alive        bool
+	mux          sync.RWMutex
+	connections  int
+	reverseProxy *httputil.ReverseProxy
+	logger       *slog.Logger
 }
 
 // NewPyroscope returns an instance of backend Pyroscope server.
-func NewPyroscope(webURL *url.URL, p *httputil.ReverseProxy, logger *slog.Logger) Server {
-	// Create a client
-	pyroClient := &http.Client{Timeout: 2 * time.Second}
-
-	// Retrieve basic auth username and password if exists
-	var basicAuthHeader string
-
-	username := webURL.User.Username()
-	password, exists := webURL.User.Password()
-
-	if exists {
-		auth := fmt.Sprintf("%s:%s", username, password)
-		base64Auth := base64.StdEncoding.EncodeToString([]byte(auth))
-		basicAuthHeader = "Basic " + base64Auth
-
-		logger.Debug("Basic auth configured for backend Pyroscope server", "backend", webURL.Redacted())
+func NewPyroscope(c base.ServerConfig, logger *slog.Logger) (Server, error) {
+	webURL, err := url.Parse(c.Web.URL)
+	if err != nil {
+		return nil, err
 	}
+
+	// Create a HTTP roundtripper
+	httpRoundTripper, err := config.NewRoundTripperFromConfig(c.Web.HTTPClientConfig, "ceems_lb", config.WithUserAgent("ceems_lb/"+webURL.Host))
+	if err != nil {
+		return nil, err
+	}
+
+	// Setup reverse proxy
+	rp := httputil.NewSingleHostReverseProxy(webURL)
+	rp.Transport = httpRoundTripper
 
 	return &pyroServer{
-		url:             webURL,
-		alive:           true,
-		reverseProxy:    p,
-		basicAuthHeader: basicAuthHeader,
-		client:          pyroClient,
-		logger:          logger,
-	}
+		url:          webURL,
+		alive:        true,
+		reverseProxy: rp,
+		logger:       logger,
+	}, nil
 }
 
-// Returns the retention period of backend Pyroscope server.
+// RetentionPeriod is retention period of backend Pyroscope server.
 func (b *pyroServer) RetentionPeriod() time.Duration {
 	// Return a very long duration so that query will always
 	// get proxied to one of the backends
@@ -68,7 +63,7 @@ func (b *pyroServer) String() string {
 	return "No backend found"
 }
 
-// Returns current number of active connections.
+// ActiveConnections is current number of active connections.
 func (b *pyroServer) ActiveConnections() int {
 	b.mux.RLock()
 	connections := b.connections
@@ -77,14 +72,14 @@ func (b *pyroServer) ActiveConnections() int {
 	return connections
 }
 
-// Sets the backend Pyroscope server as alive.
+// SetAlive sets the backend Pyroscope server as alive.
 func (b *pyroServer) SetAlive(alive bool) {
 	b.mux.Lock()
 	b.alive = alive
 	b.mux.Unlock()
 }
 
-// Returns if backend Pyroscope server is alive.
+// IsAlive returns if backend Pyroscope server is alive.
 func (b *pyroServer) IsAlive() bool {
 	b.mux.RLock()
 	alive := b.alive
@@ -93,9 +88,14 @@ func (b *pyroServer) IsAlive() bool {
 	return alive
 }
 
-// Returns URL of backend Pyroscope server.
+// URL of the backend Pyroscope server.
 func (b *pyroServer) URL() *url.URL {
 	return b.url
+}
+
+// ReverseProxy is reverse proxy of backend TSDB server.
+func (b *pyroServer) ReverseProxy() *httputil.ReverseProxy {
+	return b.reverseProxy
 }
 
 // Serves the request by the backend Pyroscope server.
@@ -105,15 +105,6 @@ func (b *pyroServer) Serve(w http.ResponseWriter, r *http.Request) {
 		b.connections--
 		b.mux.Unlock()
 	}()
-
-	// Request header at this point will contain basic auth header of LB
-	// If backend server has basic auth as well, we need to swap it to the
-	// one from backend server
-	if b.basicAuthHeader != "" {
-		// Check if basic Auth header already exists and remove it
-		r.Header.Del("Authorization")
-		r.Header.Add("Authorization", b.basicAuthHeader)
-	}
 
 	b.mux.Lock()
 	b.connections++

@@ -49,34 +49,250 @@ ceems_lb:
       # List of TSDBs for this cluster. Load balancing between these TSDBs will be 
       # made based on the strategy chosen.
       #
-      # TLS is not supported for backends. CEEMS LB supports TLS and TLS terminates
-      # at the LB and requests are proxied to backends on HTTP. 
-      #
-      # LB and backend servers are meant to be in the same DMZ so that we do not need
-      # to encrypt communications. Backends however support basic auth and they can 
-      # be configured in URL with usual syntax.
-      #
-      tsdb_urls: 
-        - http://localhost:9090
-  
-        # An example of configuring the basic auth username and password with backend
-        # - http://alice:password@localhost:9090
+      tsdb:
+        - web:
+            # URL at which Prometheus server is reachable
+            #
+            url: http://localhost:9090
+
+            # # Sets the `Authorization` header on every API request with the
+            # # configured username and password.
+            # # password and password_file are mutually exclusive.
+            # #
+            # basic_auth:
+            #   username: ''
+            #   password: ''
+            #   password_file: ''
+
+            # # Sets the `Authorization` header on every API request with
+            # # the configured credentials.
+            # #
+            # authorization:
+            #   # Sets the authentication type of the request. Default is `Bearer`.
+            #   type: Bearer
+            #   # Sets the credentials of the request. It is mutually exclusive with
+            #   # `credentials_file`.
+            #   credentials: ''
+            #   # Sets the credentials of the request with the credentials read from the
+            #   # configured file. It is mutually exclusive with `credentials`.
+            #   credentials_file: ''
+
+            #   # Optional OAuth 2.0 configuration.
+            #   # Cannot be used at the same time as basic_auth or authorization.
+            #   #
+            #   oauth2:
+            #     client_id: ''
+            #     client_secret: ''
+            #     # Read the client secret from a file.
+            #     # It is mutually exclusive with `client_secret`.
+            #     client_secret_file: ''
+            #     # Scopes for the token request.
+            #     scopes: []
+            #     # The URL to fetch the token from.
+            #     token_url: ''
+            #     # Optional parameters to append to the token URL.
+            #     endpoint_params: {}
+            #     # Configures the token request's TLS settings.
+            #     tls_config: {}
+
+            #     # Configure whether API requests follow HTTP 3xx redirects.
+            #     # Default is true
+            #     #
+            #     follow_redirects: true
+
+            #     # Whether to enable HTTP2.
+            #     # Default is true
+            #     #
+            #     enable_http2: true
+
+            #   # Configures the API request's TLS settings.
+            #   #
+            #   tls_config:
+            #     # CA certificate to validate API server certificate with. 
+            #     # At most one of ca and ca_file is allowed.
+            #     #
+            #     ca: ''
+            #     ca_file: ''
+
+            #     # Certificate and key for client cert authentication to the server.
+            #     # At most one of cert and cert_file is allowed.
+            #     # At most one of key and key_file is allowed.
+            #     #
+            #     cert: ''
+            #     cert_file: ''
+            #     key: ''
+            #     key_file: ''
+
+            #     # Disable validation of the server certificate.
+            #     #
+            #     insecure_skip_verify: false
+
+            #     # Minimum acceptable TLS version. Accepted values: TLS10 (TLS 1.0), TLS11 (TLS
+            #     # 1.1), TLS12 (TLS 1.2), TLS13 (TLS 1.3).
+            #     # If unset, Prometheus will use Go default minimum version, which is TLS 1.2.
+            #     # See MinVersion in https://pkg.go.dev/crypto/tls#Config.
+            #     #
+            #     min_version: ''
+            #     # Maximum acceptable TLS version. Accepted values: TLS10 (TLS 1.0), TLS11 (TLS
+            #     # 1.1), TLS12 (TLS 1.2), TLS13 (TLS 1.3).
+            #     # If unset, Prometheus will use Go default maximum version, which is TLS 1.3.
+            #     # See MaxVersion in https://pkg.go.dev/crypto/tls#Config.
+            #     #
+            #     max_version: ''
+
+            #   # List of headers that will be passed in the API requests to the server.
+            #   # Authentication related headers may be configured in this section. Header name
+            #   # must be configured as key and header value supports three different types of 
+            #   # headers: values, secrets and files.
+            #   #
+            #   # The difference between values and secrets is that secret will be redacted
+            #   # in server logs where as values will be emitted in the logs.
+            #   #
+            #   # Values are regular headers with values, secrets are headers that pass secret
+            #   # information like tokens and files pass the file content in the headers.
+            #   #
+            #   # Example:
+            #   # http_headers:
+            #   #   one:
+            #   #     values: [value1a, value1b, value1c]
+            #   #   two:
+            #   #     values: [value2a]
+            #   #     secrets: [value2b, value2c]
+            #   #   three:
+            #   #     files: [testdata/headers-file-a, testdata/headers-file-b, testdata/headers-file-c]
+            #   #
+            #   http_headers: {}
+
+          # A list of labels that must be filtered before proxying
+          # response back to the client.
+          # This is useful for Openstack and/or k8s case when clients should not
+          # be able to retrieve compute node or hypervisor related information like
+          # node address, node name, etc.
+          # All the labels listed here will be filtered from the response before sending
+          # it to the clients.
+          #
+          filter_labels: []
 
       # List of Pyroscope servers for this cluster. Load balancing between these servers 
       # will be made based on the strategy chosen.
       #
-      # TLS is not supported for backends. CEEMS LB supports TLS and TLS terminates
-      # at the LB and requests are proxied to backends on HTTP. 
-      #
-      # LB and backend servers are meant to be in the same DMZ so that we do not need
-      # to encrypt communications. Backends however support basic auth and they can 
-      # be configured in URL with usual syntax.
-      #
-      pyroscope_urls: 
-        - http://localhost:4040
-  
-        # An example of configuring the basic auth username and password with backend
-        # - http://alice:password@localhost:4040
+      pyroscope:
+          - web:
+              # URL at which Pyroscope server is reachable
+              #
+              url: http://localhost:4040
+
+              # # Sets the `Authorization` header on every API request with the
+              # # configured username and password.
+              # # password and password_file are mutually exclusive.
+              # #
+              # basic_auth:
+              #   username: ''
+              #   password: ''
+              #   password_file: ''
+
+              # # Sets the `Authorization` header on every API request with
+              # # the configured credentials.
+              # #
+              # authorization:
+              #   # Sets the authentication type of the request. Default is `Bearer`.
+              #   type: Bearer
+              #   # Sets the credentials of the request. It is mutually exclusive with
+              #   # `credentials_file`.
+              #   credentials: ''
+              #   # Sets the credentials of the request with the credentials read from the
+              #   # configured file. It is mutually exclusive with `credentials`.
+              #   credentials_file: ''
+
+              #   # Optional OAuth 2.0 configuration.
+              #   # Cannot be used at the same time as basic_auth or authorization.
+              #   #
+              #   oauth2:
+              #     client_id: ''
+              #     client_secret: ''
+              #     # Read the client secret from a file.
+              #     # It is mutually exclusive with `client_secret`.
+              #     client_secret_file: ''
+              #     # Scopes for the token request.
+              #     scopes: []
+              #     # The URL to fetch the token from.
+              #     token_url: ''
+              #     # Optional parameters to append to the token URL.
+              #     endpoint_params: {}
+              #     # Configures the token request's TLS settings.
+              #     tls_config: {}
+
+              #     # Configure whether API requests follow HTTP 3xx redirects.
+              #     # Default is true
+              #     #
+              #     follow_redirects: true
+
+              #     # Whether to enable HTTP2.
+              #     # Default is true
+              #     #
+              #     enable_http2: true
+
+              #   # Configures the API request's TLS settings.
+              #   #
+              #   tls_config:
+              #     # CA certificate to validate API server certificate with. 
+              #     # At most one of ca and ca_file is allowed.
+              #     #
+              #     ca: ''
+              #     ca_file: ''
+
+              #     # Certificate and key for client cert authentication to the server.
+              #     # At most one of cert and cert_file is allowed.
+              #     # At most one of key and key_file is allowed.
+              #     #
+              #     cert: ''
+              #     cert_file: ''
+              #     key: ''
+              #     key_file: ''
+
+              #     # Disable validation of the server certificate.
+              #     #
+              #     insecure_skip_verify: false
+
+              #     # Minimum acceptable TLS version. Accepted values: TLS10 (TLS 1.0), TLS11 (TLS
+              #     # 1.1), TLS12 (TLS 1.2), TLS13 (TLS 1.3).
+              #     # If unset, Prometheus will use Go default minimum version, which is TLS 1.2.
+              #     # See MinVersion in https://pkg.go.dev/crypto/tls#Config.
+              #     #
+              #     min_version: ''
+              #     # Maximum acceptable TLS version. Accepted values: TLS10 (TLS 1.0), TLS11 (TLS
+              #     # 1.1), TLS12 (TLS 1.2), TLS13 (TLS 1.3).
+              #     # If unset, Prometheus will use Go default maximum version, which is TLS 1.3.
+              #     # See MaxVersion in https://pkg.go.dev/crypto/tls#Config.
+              #     #
+              #     max_version: ''
+
+              #   # List of headers that will be passed in the API requests to the server.
+              #   # Authentication related headers may be configured in this section. Header name
+              #   # must be configured as key and header value supports three different types of 
+              #   # headers: values, secrets and files.
+              #   #
+              #   # The difference between values and secrets is that secret will be redacted
+              #   # in server logs where as values will be emitted in the logs.
+              #   #
+              #   # Values are regular headers with values, secrets are headers that pass secret
+              #   # information like tokens and files pass the file content in the headers.
+              #   #
+              #   # Example:
+              #   # http_headers:
+              #   #   one:
+              #   #     values: [value1a, value1b, value1c]
+              #   #   two:
+              #   #     values: [value2a]
+              #   #     secrets: [value2b, value2c]
+              #   #   three:
+              #   #     files: [testdata/headers-file-a, testdata/headers-file-b, testdata/headers-file-c]
+              #   #
+              #   http_headers: {}
+
+            # Currently filter_labels is NOT SUPPORTED for Pyroscope backend
+            #
+            filter_labels: []
 
 # CEEMS API server config.
 # This config is essential to enable access control on the TSDB. By excluding 

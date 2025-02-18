@@ -211,7 +211,8 @@ func QueryHandler(w http.ResponseWriter, r *http.Request) {
 			results = append(results,
 				map[string]interface{}{
 					"metric": map[string]string{
-						"uuid": uuid,
+						"uuid":     uuid,
+						"instance": "localhost:9090",
 					},
 					"value": []interface{}{
 						12345, strconv.FormatFloat(value, 'f', -1, 64),
@@ -227,7 +228,8 @@ func QueryHandler(w http.ResponseWriter, r *http.Request) {
 			results = append(results,
 				map[string]interface{}{
 					"metric": map[string]string{
-						"uuid": uuid,
+						"uuid":     uuid,
+						"instance": "localhost:9090",
 					},
 					"value": []interface{}{
 						12345, strconv.FormatUint(uint64(h), 10),
@@ -243,7 +245,8 @@ func QueryHandler(w http.ResponseWriter, r *http.Request) {
 			results = append(results,
 				map[string]interface{}{
 					"metric": map[string]string{
-						"uuid": uuid,
+						"uuid":     uuid,
+						"instance": "localhost:9090",
 					},
 					"value": []interface{}{
 						12345, strconv.FormatUint(uint64(h)*10, 10),
@@ -259,7 +262,8 @@ func QueryHandler(w http.ResponseWriter, r *http.Request) {
 			results = append(results,
 				map[string]interface{}{
 					"metric": map[string]string{
-						"uuid": uuid,
+						"uuid":     uuid,
+						"instance": "localhost:9090",
 					},
 					"value": []interface{}{
 						12345, strconv.FormatUint(uint64(h)*100, 10),
@@ -275,7 +279,8 @@ func QueryHandler(w http.ResponseWriter, r *http.Request) {
 			results = append(results,
 				map[string]interface{}{
 					"metric": map[string]string{
-						"uuid": uuid,
+						"uuid":     uuid,
+						"instance": "localhost:9090",
 					},
 					"value": []interface{}{
 						12345, strconv.FormatUint(uint64(h)*1000, 10),
@@ -304,6 +309,55 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 		Data: map[string]string{
 			"yaml": "global:\n  scrape_interval: 15s\n  scrape_timeout: 10s\n  scrape_protocols:\n  - OpenMetricsText1.0.0\n  - OpenMetricsText0.0.1\n  - PrometheusText0.0.4\n  evaluation_interval: 10s\n  external_labels:\n    environment: prometheus-demo\nalerting:\n  alertmanagers:\n  - follow_redirects: true\n    enable_http2: true\n    scheme: http\n    timeout: 10s\n    api_version: v2\n    static_configs:\n    - targets:\n      - demo.do.prometheus.io:9093\nrule_files:\n- /etc/prometheus/rules/*.rules\nscrape_configs:\n- job_name: prometheus\n  honor_timestamps: true\n  track_timestamps_staleness: false\n  scrape_interval: 15s\n  scrape_timeout: 10s\n  scrape_protocols:\n  - OpenMetricsText1.0.0\n  - OpenMetricsText0.0.1\n  - PrometheusText0.0.4\n  metrics_path: /metrics\n  scheme: http\n  enable_compression: true\n  follow_redirects: true\n  enable_http2: true\n  static_configs:\n  - targets:\n    - demo.do.prometheus.io:9090\n- job_name: random\n  honor_timestamps: true\n  track_timestamps_staleness: false\n  scrape_interval: 15s\n  scrape_timeout: 10s\n  scrape_protocols:\n  - OpenMetricsText1.0.0\n  - OpenMetricsText0.0.1\n  - PrometheusText0.0.4\n  metrics_path: /metrics\n  scheme: http\n  enable_compression: true\n  follow_redirects: true\n  enable_http2: true\n  file_sd_configs:\n  - files:\n    - /etc/prometheus/file_sd/random.yml\n    refresh_interval: 5m\n- job_name: caddy\n  honor_timestamps: true\n  track_timestamps_staleness: false\n  scrape_interval: 15s\n  scrape_timeout: 10s\n  scrape_protocols:\n  - OpenMetricsText1.0.0\n  - OpenMetricsText0.0.1\n  - PrometheusText0.0.4\n  metrics_path: /metrics\n  scheme: http\n  enable_compression: true\n  follow_redirects: true\n  enable_http2: true\n  static_configs:\n  - targets:\n    - localhost:2019\n- job_name: grafana\n  honor_timestamps: true\n  track_timestamps_staleness: false\n  scrape_interval: 15s\n  scrape_timeout: 10s\n  scrape_protocols:\n  - OpenMetricsText1.0.0\n  - OpenMetricsText0.0.1\n  - PrometheusText0.0.4\n  metrics_path: /metrics\n  scheme: http\n  enable_compression: true\n  follow_redirects: true\n  enable_http2: true\n  static_configs:\n  - targets:\n    - demo.do.prometheus.io:3000\n- job_name: node\n  honor_timestamps: true\n  track_timestamps_staleness: false\n  scrape_interval: 15s\n  scrape_timeout: 10s\n  scrape_protocols:\n  - OpenMetricsText1.0.0\n  - OpenMetricsText0.0.1\n  - PrometheusText0.0.4\n  metrics_path: /metrics\n  scheme: http\n  enable_compression: true\n  follow_redirects: true\n  enable_http2: true\n  file_sd_configs:\n  - files:\n    - /etc/prometheus/file_sd/node.yml\n    refresh_interval: 5m\n- job_name: alertmanager\n  honor_timestamps: true\n  track_timestamps_staleness: false\n  scrape_interval: 15s\n  scrape_timeout: 10s\n  scrape_protocols:\n  - OpenMetricsText1.0.0\n  - OpenMetricsText0.0.1\n  - PrometheusText0.0.4\n  metrics_path: /metrics\n  scheme: http\n  enable_compression: true\n  follow_redirects: true\n  enable_http2: true\n  file_sd_configs:\n  - files:\n    - /etc/prometheus/file_sd/alertmanager.yml\n    refresh_interval: 5m\n- job_name: cadvisor\n  honor_timestamps: true\n  track_timestamps_staleness: true\n  scrape_interval: 15s\n  scrape_timeout: 10s\n  scrape_protocols:\n  - OpenMetricsText1.0.0\n  - OpenMetricsText0.0.1\n  - PrometheusText0.0.4\n  metrics_path: /metrics\n  scheme: http\n  enable_compression: true\n  follow_redirects: true\n  enable_http2: true\n  file_sd_configs:\n  - files:\n    - /etc/prometheus/file_sd/cadvisor.yml\n    refresh_interval: 5m\n- job_name: blackbox\n  honor_timestamps: true\n  track_timestamps_staleness: false\n  params:\n    module:\n    - http_2xx\n  scrape_interval: 15s\n  scrape_timeout: 10s\n  scrape_protocols:\n  - OpenMetricsText1.0.0\n  - OpenMetricsText0.0.1\n  - PrometheusText0.0.4\n  metrics_path: /probe\n  scheme: http\n  enable_compression: true\n  follow_redirects: true\n  enable_http2: true\n  relabel_configs:\n  - source_labels: [__address__]\n    separator: ;\n    regex: (.*)\n    target_label: __param_target\n    replacement: $1\n    action: replace\n  - source_labels: [__param_target]\n    separator: ;\n    regex: (.*)\n    target_label: instance\n    replacement: $1\n    action: replace\n  - separator: ;\n    regex: (.*)\n    target_label: __address__\n    replacement: 127.0.0.1:9115\n    action: replace\n  static_configs:\n  - targets:\n    - http://localhost:9100\n",
 		},
+	}
+	if err := json.NewEncoder(w).Encode(&response); err != nil {
+		w.Write([]byte("KO"))
+	}
+}
+
+// FlagsHandler handles Promtheus flags.
+func FlagsHandler(w http.ResponseWriter, r *http.Request) {
+	response := tsdb.Response[any]{
+		Status: "success",
+		Data: map[string]interface{}{
+			"query.lookback-delta": "5m",
+			"query.max-samples":    "50000000",
+			"query.timeout":        "2m",
+		},
+	}
+	if err := json.NewEncoder(w).Encode(&response); err != nil {
+		w.Write([]byte("KO"))
+	}
+}
+
+// RuntimeInfoHandler handles Promtheus runtime info.
+func RuntimeInfoHandler(w http.ResponseWriter, r *http.Request) {
+	response := tsdb.Response[any]{
+		Status: "success",
+		Data: map[string]interface{}{
+			"startTime":           "2025-02-18T07:43:52.775090028Z",
+			"CWD":                 "/var/lib/prometheus",
+			"reloadConfigSuccess": true,
+			"lastConfigTime":      "2025-02-18T07:43:53Z",
+			"corruptionCount":     0,
+			"goroutineCount":      49,
+			"GOMAXPROCS":          12,
+			"GOMEMLIMIT":          14739915571,
+			"GOGC":                "75",
+			"GODEBUG":             "",
+			"storageRetention":    "10y",
+		},
+	}
+	if err := json.NewEncoder(w).Encode(&response); err != nil {
+		w.Write([]byte("KO"))
+	}
+}
+
+// LabelNamesHandler handles Promtheus label names.
+func LabelNamesHandler(w http.ResponseWriter, r *http.Request) {
+	response := tsdb.Response[any]{
+		Status: "success",
+		Data:   []string{"job", "instance", "__name__"},
 	}
 	if err := json.NewEncoder(w).Encode(&response); err != nil {
 		w.Write([]byte("KO"))
@@ -475,7 +529,10 @@ func promServer(ctx context.Context) {
 	// Registering our handler functions, and creating paths.
 	promMux := http.NewServeMux()
 	promMux.HandleFunc("/api/v1/query", QueryHandler)
+	promMux.HandleFunc("/api/v1/labels", LabelNamesHandler)
 	promMux.HandleFunc("/api/v1/status/config", ConfigHandler)
+	promMux.HandleFunc("/api/v1/status/flags", FlagsHandler)
+	promMux.HandleFunc("/api/v1/status/runtimeinfo", RuntimeInfoHandler)
 
 	log.Println("Started Prometheus on port", promPortNum)
 	log.Println("To close connection CTRL+C :-)")

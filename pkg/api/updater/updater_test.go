@@ -1,20 +1,66 @@
 package updater
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/mahendrapaipuri/ceems/pkg/api/base"
+	"github.com/mahendrapaipuri/ceems/pkg/api/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type mockUpdater struct {
+	logger *slog.Logger
+}
+
+func NewMockUpdater(instance Instance, logger *slog.Logger) (Updater, error) {
+	return &mockUpdater{
+		logger: logger,
+	}, nil
+}
+
+func (u *mockUpdater) Update(
+	ctx context.Context,
+	startTime time.Time,
+	endTime time.Time,
+	clusterUnits []models.ClusterUnits,
+) []models.ClusterUnits {
+	return []models.ClusterUnits{
+		{
+			Cluster: models.Cluster{ID: "mock", Updaters: []string{"default"}},
+			Units: []models.Unit{
+				{
+					TotalCPUEnergyUsage: models.MetricMap{"total": 1000},
+				},
+			},
+		},
+	}
+}
 
 func mockConfig(tmpDir string, cfg string, serverURL string) string {
 	var configFileTmpl string
 
 	switch cfg {
+	case "mock_instance":
+		configFileTmpl = `
+---
+updaters:
+  - id: default
+    updater: mock
+    web: 
+      url: %[1]s
+    extra_config:
+      cutoff_duration: %[2]s
+      queries:
+        avg_cpu_usage: foo
+        avg_cpu_mem_usage: foo`
 	case "one_instance":
 		configFileTmpl = `
 ---
@@ -161,4 +207,35 @@ func TestOneInstanceConfig(t *testing.T) {
 
 	_, err = checkConfig([]string{"tsdb"}, cfg)
 	assert.NoError(t, err)
+}
+
+func TestNewUpdater(t *testing.T) {
+	// Make mock config
+	base.ConfigFilePath = mockConfig(t.TempDir(), "mock_instance", "http://localhost:9090")
+	ctx := context.Background()
+
+	// Register mock updater
+	Register("mock", NewMockUpdater)
+
+	// Create new updater
+	updater, err := New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+
+	// Fetch units
+	unitsIn := []models.ClusterUnits{
+		{
+			Cluster: models.Cluster{ID: "mock", Updaters: []string{"default"}},
+			Units: []models.Unit{
+				{
+					UUID: "12345",
+				},
+			},
+		},
+	}
+	units := updater.Update(ctx, time.Now(), time.Now(), unitsIn)
+
+	require.NoError(t, err)
+
+	assert.Len(t, units[0].Units, 1)
+	assert.Equal(t, models.MetricMap{"total": 1000}, units[0].Units[0].TotalCPUEnergyUsage)
 }

@@ -47,6 +47,34 @@ Thus, CEEMS load balancer can be configured as Prometheus and Pyroscope data sou
 the load balancer will take care of routing traffic to backend TSDB/Pyroscope instances and at
 the same time enforcing access control.
 
+## Access control
+
+Besides providing access control to the metrics, CEEMS load balancer black lists most of the
+management API of the backend TSDB/Pyroscope servers. This will ensure that end users will not
+be able to access API resources that return configuration details, build time/runtime information,
+_etc_. CEEMS load balancer only allows handful of API resources for TSDB/Pyroscope that are
+strictly necessary to make queries. Currently, the allowed resources are as follows:
+
+### TSDB
+
+- `/api/v1/labels`
+- `/api/v1/series`
+- `/api/v1/<label_name>/values`
+- `/api/v1/query`
+- `/api/v1/query_range`
+
+More details on each of these resources can be consulted from
+[Prometheus Docs](https://prometheus.io/docs/prometheus/latest/querying/api/#http-api).
+
+### Pyroscope
+
+- `/querier.v1.QuerierService/SelectMergeStacktraces`
+- `/querier.v1.QuerierService/LabelNames`
+- `/querier.v1.QuerierService/LabelValues`
+
+The API documentation for Pyroscope is very minimal. These are the minimum resources
+needed to pull profiling data from Pyroscope server.
+
 ## Load balancing
 
 CEEMS load balancer supports classic load balancing strategies like round-robin and least

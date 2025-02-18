@@ -6,27 +6,24 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httputil"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mahendrapaipuri/ceems/pkg/api/models"
+	"github.com/mahendrapaipuri/ceems/pkg/lb/base"
 	"github.com/mahendrapaipuri/ceems/pkg/tsdb"
+	"github.com/prometheus/common/config"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	testURL          = "http://localhost:3333"
-	testURLBasicAuth = "http://foo:bar@localhost:3333" // #nosec
-)
-
-func TestTSDBConfigSuccess(t *testing.T) {
+func testTSDBServer(storageRetention string, emptyResponse bool, basicAuth bool) *httptest.Server {
 	// Start test server
 	expectedRuntime := tsdb.Response[any]{
 		Status: "success",
 		Data: map[string]string{
-			"storageRetention": "30d",
+			"storageRetention": storageRetention,
 		},
 	}
 	expectedRange := tsdb.Response[any]{
@@ -49,7 +46,24 @@ func TestTSDBConfigSuccess(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "runtimeinfo") {
+		if basicAuth {
+			if r.Header.Get("Authorization") == "" {
+				w.WriteHeader(http.StatusForbidden)
+
+				return
+			}
+		}
+
+		if emptyResponse {
+			expected := "dummy"
+			if err := json.NewEncoder(w).Encode(&expected); err != nil {
+				w.Write([]byte("KO"))
+			}
+
+			return
+		}
+
+		if strings.HasSuffix(r.URL.Path, "runtimeinfo") {
 			if err := json.NewEncoder(w).Encode(&expectedRuntime); err != nil {
 				w.Write([]byte("KO"))
 			}
@@ -59,146 +73,125 @@ func TestTSDBConfigSuccess(t *testing.T) {
 			}
 		}
 	}))
+
+	return server
+}
+
+func TestTSDBConfigSuccess(t *testing.T) {
+	// Start test server
+	server := testTSDBServer("30d", false, false)
 	// defer server.Close()
 
-	url, _ := url.Parse(server.URL)
-	b := NewTSDB(url, httputil.NewSingleHostReverseProxy(url), slog.New(slog.NewTextHandler(io.Discard, nil)))
-	require.Equal(t, server.URL, b.URL().String())
-	require.Equal(t, 720*time.Hour, b.RetentionPeriod())
-	require.True(t, b.IsAlive())
-	require.Equal(t, 0, b.ActiveConnections())
+	b, err := NewTSDB(base.ServerConfig{Web: models.WebConfig{URL: server.URL}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+
+	assert.Equal(t, server.URL, b.URL().String())
+	assert.Equal(t, 354*time.Hour, b.RetentionPeriod())
+	assert.True(t, b.IsAlive())
+	assert.Equal(t, 0, b.ActiveConnections())
+	assert.NotEmpty(t, b.ReverseProxy())
 
 	// Stop dummy server and query for retention period, we should get last updated value
 	server.Close()
-	require.Equal(t, 720*time.Hour, b.RetentionPeriod())
+	assert.Equal(t, 354*time.Hour, b.RetentionPeriod())
 }
 
 func TestTSDBConfigSuccessWithTwoRetentions(t *testing.T) {
 	// Start test server
-	expectedRuntime := tsdb.Response[any]{
-		Status: "success",
-		Data: map[string]string{
-			"storageRetention": "30d or 10GiB",
-		},
-	}
-
-	expectedRange := tsdb.Response[any]{
-		Status: "success",
-		Data: map[string]interface{}{
-			"resultType": "matrix",
-			"result": []interface{}{
-				map[string]interface{}{
-					"metric": map[string]string{
-						"__name__": "up",
-						"instance": "localhost:9090",
-					},
-					"values": []interface{}{
-						[]interface{}{time.Now().Add(-30 * 24 * time.Hour).Unix(), "1"},
-						[]interface{}{time.Now().Add(-30 * 23 * time.Hour).Unix(), "1"},
-					},
-				},
-			},
-		},
-	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "runtimeinfo") {
-			if err := json.NewEncoder(w).Encode(&expectedRuntime); err != nil {
-				w.Write([]byte("KO"))
-			}
-		} else {
-			if err := json.NewEncoder(w).Encode(&expectedRange); err != nil {
-				w.Write([]byte("KO"))
-			}
-		}
-	}))
+	server := testTSDBServer("30d or 10GiB", false, false)
 	defer server.Close()
 
-	url, _ := url.Parse(server.URL)
-	b := NewTSDB(url, httputil.NewSingleHostReverseProxy(url), slog.New(slog.NewTextHandler(io.Discard, nil)))
-	require.Equal(t, server.URL, b.URL().String())
-	require.Equal(t, 714*time.Hour, b.RetentionPeriod())
-	require.True(t, b.IsAlive())
+	b, err := NewTSDB(base.ServerConfig{Web: models.WebConfig{URL: server.URL}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+
+	assert.Equal(t, server.URL, b.URL().String())
+	assert.Equal(t, 354*time.Hour, b.RetentionPeriod())
+	assert.True(t, b.IsAlive())
 }
 
 func TestTSDBConfigSuccessWithRetentionSize(t *testing.T) {
 	// Start test server
-	expectedRuntime := tsdb.Response[any]{
-		Status: "success",
-		Data: map[string]string{
-			"storageRetention": "10GiB",
-		},
-	}
-
-	expectedRange := tsdb.Response[any]{
-		Status: "success",
-		Data: map[string]interface{}{
-			"resultType": "matrix",
-			"result": []interface{}{
-				map[string]interface{}{
-					"metric": map[string]string{
-						"__name__": "up",
-						"instance": "localhost:9090",
-					},
-					"values": []interface{}{
-						[]interface{}{time.Now().Add(-30 * 24 * time.Hour).Unix(), "1"},
-						[]interface{}{time.Now().Add(-30 * 23 * time.Hour).Unix(), "1"},
-					},
-				},
-			},
-		},
-	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "runtimeinfo") {
-			if err := json.NewEncoder(w).Encode(&expectedRuntime); err != nil {
-				w.Write([]byte("KO"))
-			}
-		} else {
-			if err := json.NewEncoder(w).Encode(&expectedRange); err != nil {
-				w.Write([]byte("KO"))
-			}
-		}
-	}))
+	server := testTSDBServer("10GiB", false, false)
 	defer server.Close()
 
-	url, _ := url.Parse(server.URL)
-	b := NewTSDB(url, httputil.NewSingleHostReverseProxy(url), slog.New(slog.NewTextHandler(io.Discard, nil)))
-	require.Equal(t, server.URL, b.URL().String())
-	require.Equal(t, 714*time.Hour, b.RetentionPeriod())
-	require.True(t, b.IsAlive())
+	b, err := NewTSDB(base.ServerConfig{Web: models.WebConfig{URL: server.URL}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+
+	assert.Equal(t, server.URL, b.URL().String())
+	assert.Equal(t, 354*time.Hour, b.RetentionPeriod())
+	assert.True(t, b.IsAlive())
 }
 
 func TestTSDBConfigFail(t *testing.T) {
 	// Start test server
-	expected := "dummy"
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewEncoder(w).Encode(&expected); err != nil {
-			w.Write([]byte("KO"))
-		}
-	}))
+	server := testTSDBServer("10GiB", true, false)
 	defer server.Close()
 
-	url, _ := url.Parse(server.URL)
-	b := NewTSDB(url, httputil.NewSingleHostReverseProxy(url), slog.New(slog.NewTextHandler(io.Discard, nil)))
-	require.Equal(t, server.URL, b.URL().String())
-	require.Equal(t, 0*time.Hour, b.RetentionPeriod())
-	require.True(t, b.IsAlive())
+	b, err := NewTSDB(base.ServerConfig{Web: models.WebConfig{URL: server.URL}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+
+	assert.Equal(t, server.URL, b.URL().String())
+	assert.Equal(t, 0*time.Hour, b.RetentionPeriod())
+	assert.True(t, b.IsAlive())
+}
+
+func TestTSDBBackendWithBasicAuth(t *testing.T) {
+	// Start test server
+	server := testTSDBServer("30d", false, true)
+	defer server.Close()
+
+	c := base.ServerConfig{
+		Web: models.WebConfig{
+			URL: server.URL,
+			HTTPClientConfig: config.HTTPClientConfig{
+				BasicAuth: &config.BasicAuth{
+					Username: "prometheus",
+					Password: "secret",
+				},
+			},
+		},
+	}
+	b, err := NewTSDB(c, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+
+	assert.Equal(t, 354*time.Hour, b.RetentionPeriod())
+	assert.True(t, b.IsAlive())
+}
+
+func TestTSDBQueryWithLabelFilter(t *testing.T) {
+	// Start test server
+	server := testTSDBServer("30d", false, false)
+	defer server.Close()
+
+	b, err := NewTSDB(
+		base.ServerConfig{Web: models.WebConfig{URL: server.URL}, FilterLabels: []string{"instance"}},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	require.NoError(t, err)
+
+	// Make a request to query resource
+	req := httptest.NewRequest(http.MethodGet, "/query", nil)
+
+	responseRecorder := httptest.NewRecorder()
+	http.HandlerFunc(b.Serve).ServeHTTP(responseRecorder, req)
+
+	// Ensure that filtered labels do not exist on response
+	body, err := io.ReadAll(responseRecorder.Body)
+	require.NoError(t, err)
+
+	var tsdbResp tsdb.Response[tsdb.Data]
+	err = json.Unmarshal(body, &tsdbResp)
+	require.NoError(t, err)
+
+	assert.Empty(t, tsdbResp.Data.Result[0].Metric["instance"])
 }
 
 func TestTSDBBackendAlive(t *testing.T) {
-	url, _ := url.Parse(testURL)
-	b := NewTSDB(url, httputil.NewSingleHostReverseProxy(url), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c := base.ServerConfig{Web: models.WebConfig{URL: "http://localhost:9090"}}
+	b, err := NewTSDB(c, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+
 	b.SetAlive(b.IsAlive())
 
-	require.True(t, b.IsAlive())
-}
-
-func TestTSDBBackendAliveWithBasicAuth(t *testing.T) {
-	url, _ := url.Parse(testURLBasicAuth)
-	b := NewTSDB(url, httputil.NewSingleHostReverseProxy(url), slog.New(slog.NewTextHandler(io.Discard, nil)))
-	b.SetAlive(b.IsAlive())
-
-	require.True(t, b.IsAlive())
+	assert.True(t, b.IsAlive())
 }

@@ -796,20 +796,11 @@ then
 
   if [[ "${scenario}" = "lb-basic" ]] 
   then
-    export PATH="${GOBIN:-}:${PATH}"
-    prometheus \
-      --config.file pkg/lb/testdata/prometheus.yml \
-      --storage.tsdb.path "${tmpdir}" \
-      --storage.tsdb.retention.time 10y \
-      --log.level="debug" >> "${logfile}" 2>&1 &
-    PROMETHEUS_PID=$!
-
-    waitport "9090"
-
-    ./bin/mock_servers pyro >> "${logfile}" 2>&1 &
+    ./bin/mock_servers prom pyro >> "${logfile}" 2>&1 &
     MOCK_SERVERS_PID=$!
 
     waitport "4040"
+    waitport "9090"
 
     ./bin/ceems_lb \
       --config.file pkg/lb/testdata/config-db.yml \
@@ -818,7 +809,7 @@ then
       --log.level="debug" >> "${logfile}" 2>&1 &
     LB_PID=$!
 
-    echo "${PROMETHEUS_PID} ${MOCK_SERVERS_PID} ${LB_PID}" > "${pidfile}"
+    echo "${MOCK_SERVERS_PID} ${LB_PID}" > "${pidfile}"
 
     waitport "${port}"
     waitport "${port2}"
@@ -828,13 +819,8 @@ then
 
   elif [[ "${scenario}" = "lb-basic-tsdb-only" ]] 
   then
-    export PATH="${GOBIN:-}:${PATH}"
-    prometheus \
-      --config.file pkg/lb/testdata/prometheus.yml \
-      --storage.tsdb.path "${tmpdir}" \
-      --storage.tsdb.retention.time 10y \
-      --log.level="debug" >> "${logfile}" 2>&1 &
-    PROMETHEUS_PID=$!
+    ./bin/mock_servers prom >> "${logfile}" 2>&1 &
+    MOCK_SERVERS_PID=$!
 
     waitport "9090"
 
@@ -844,7 +830,7 @@ then
       --log.level="debug" >> "${logfile}" 2>&1 &
     LB_PID=$!
 
-    echo "${PROMETHEUS_PID} ${LB_PID}" > "${pidfile}"
+    echo "${MOCK_SERVERS_PID} ${LB_PID}" > "${pidfile}"
 
     waitport "${port}"
 
@@ -872,19 +858,10 @@ then
 
   elif [[ "${scenario}" = "lb-basic-tsdb-pyro" ]] 
   then
-    export PATH="${GOBIN:-}:${PATH}"
-    prometheus \
-      --config.file pkg/lb/testdata/prometheus.yml \
-      --storage.tsdb.path "${tmpdir}" \
-      --storage.tsdb.retention.time 10y \
-      --log.level="debug" >> "${logfile}" 2>&1 &
-    PROMETHEUS_PID=$!
-
-    waitport "9090"
-
-    ./bin/mock_servers pyro >> "${logfile}" 2>&1 &
+    ./bin/mock_servers prom pyro >> "${logfile}" 2>&1 &
     MOCK_SERVERS_PID=$!
 
+    waitport "9090"
     waitport "4040"
 
     ./bin/ceems_lb \
@@ -894,7 +871,7 @@ then
       --log.level="debug" >> "${logfile}" 2>&1 &
     LB_PID=$!
 
-    echo "${PROMETHEUS_PID} ${MOCK_SERVERS_PID} ${LB_PID}" > "${pidfile}"
+    echo "${MOCK_SERVERS_PID} ${LB_PID}" > "${pidfile}"
 
     waitport "${port}"
     waitport "${port2}"
@@ -905,20 +882,11 @@ then
 
   elif [[ "${scenario}" = "lb-forbid-user-query-db" ]] 
   then
-    export PATH="${GOBIN:-}:${PATH}"
-    prometheus \
-      --config.file pkg/lb/testdata/prometheus.yml \
-      --storage.tsdb.path "${tmpdir}" \
-      --storage.tsdb.retention.time 10y \
-      --log.level="debug" >> "${logfile}" 2>&1 &
-    PROMETHEUS_PID=$!
-
-    waitport "9090"
-
-    ./bin/mock_servers pyro >> "${logfile}" 2>&1 &
+    ./bin/mock_servers prom pyro >> "${logfile}" 2>&1 &
     MOCK_SERVERS_PID=$!
 
     waitport "4040"
+    waitport "9090"
 
     ./bin/ceems_lb \
       --config.file pkg/lb/testdata/config-db.yml \
@@ -927,30 +895,21 @@ then
       --log.level="debug" >> "${logfile}" 2>&1 &
     LB_PID=$!
 
-    echo "${PROMETHEUS_PID} ${MOCK_SERVERS_PID} ${LB_PID}" > "${pidfile}"
+    echo "${MOCK_SERVERS_PID} ${LB_PID}" > "${pidfile}"
 
     waitport "${port}"
     waitport "${port2}"
 
-    get -H "X-Grafana-User: usr1" -H "X-Ceems-Cluster-Id: slurm-1" "127.0.0.1:${port}/api/v1/query?query=foo\{uuid=\"1481510\"\}&time=1713032179.506" > "${fixture_output}"
+    get -H "X-Grafana-User: usr1" -H "X-Ceems-Cluster-Id: slurm-1" "127.0.0.1:${port}/api/v1/query?query=avg_cpu_usage\{uuid=\"1481510\"\}&time=1713032179.506" > "${fixture_output}"
     ./bin/pyro_requestor -url "http://localhost:${port2}/querier.v1.QuerierService/SelectMergeStacktraces" -username usr1 -cluster-id slurm-1 -uuid 1481510 -start 1713032179000 >> "${fixture_output}"
 
   elif [[ "${scenario}" = "lb-allow-user-query-db" ]] 
   then
-    export PATH="${GOBIN:-}:${PATH}"
-    prometheus \
-      --config.file pkg/lb/testdata/prometheus.yml \
-      --storage.tsdb.path "${tmpdir}" \
-      --storage.tsdb.retention.time 10y \
-      --log.level="debug" >> "${logfile}" 2>&1 &
-    PROMETHEUS_PID=$!
-
-    waitport "9090"
-
-    ./bin/mock_servers pyro >> "${logfile}" 2>&1 &
+    ./bin/mock_servers prom pyro >> "${logfile}" 2>&1 &
     MOCK_SERVERS_PID=$!
 
     waitport "4040"
+    waitport "9090"
 
     ./bin/ceems_lb \
       --config.file pkg/lb/testdata/config-db.yml \
@@ -959,29 +918,20 @@ then
       --log.level="debug" >> "${logfile}" 2>&1 &
     LB_PID=$!
 
-    echo "${PROMETHEUS_PID} ${MOCK_SERVERS_PID} ${LB_PID}" > "${pidfile}"
+    echo "${MOCK_SERVERS_PID} ${LB_PID}" > "${pidfile}"
 
     waitport "${port}"
     waitport "${port2}"
 
-    get -H "X-Grafana-User: usr1" -H "X-Ceems-Cluster-Id: slurm-0" "127.0.0.1:${port}/api/v1/query?query=foo\{uuid=\"1479763\"\}&time=1645450627" > "${fixture_output}"
+    get -H "X-Grafana-User: usr1" -H "X-Ceems-Cluster-Id: slurm-0" "127.0.0.1:${port}/api/v1/query?query=avg_cpu_usage\{uuid=\"1479763\"\}&time=1645450627" > "${fixture_output}"
     ./bin/pyro_requestor -url "http://localhost:${port2}/querier.v1.QuerierService/SelectMergeStacktraces" -username usr1 -cluster-id slurm-0 -uuid 1479763 -start 1645450627000 >> "${fixture_output}"
 
   elif [[ "${scenario}" = "lb-forbid-user-query-api" ]] 
   then
-    export PATH="${GOBIN:-}:${PATH}"
-    prometheus \
-      --config.file pkg/lb/testdata/prometheus.yml \
-      --storage.tsdb.path "${tmpdir}" \
-      --storage.tsdb.retention.time 10y \
-      --log.level="debug" >> "${logfile}" 2>&1 &
-    PROMETHEUS_PID=$!
-
-    waitport "9090"
-
-    ./bin/mock_servers pyro os-compute os-identity >> "${logfile}" 2>&1 &
+    ./bin/mock_servers prom pyro os-compute os-identity >> "${logfile}" 2>&1 &
     MOCK_SERVERS_PID=$!
 
+    waitport "9090"
     waitport "4040"
     waitport "8080"
     waitport "7070"
@@ -1008,32 +958,23 @@ then
       --log.level="debug" >> "${logfile}" 2>&1 &
     LB_PID=$!
 
-    echo "${PROMETHEUS_PID} ${MOCK_SERVERS_PID} ${CEEMS_API_PID} ${LB_PID}" > "${pidfile}"
+    echo "${MOCK_SERVERS_PID} ${CEEMS_API_PID} ${LB_PID}" > "${pidfile}"
 
     waitport "${port}"
     waitport "${port2}"
 
-    get -H "X-Grafana-User: usr1" -H "X-Ceems-Cluster-Id: slurm-1" "127.0.0.1:${port}/api/v1/query?query=foo\{uuid=\"1481510\"\}&time=1676990946" > "${fixture_output}"
+    get -H "X-Grafana-User: usr1" -H "X-Ceems-Cluster-Id: slurm-1" "127.0.0.1:${port}/api/v1/query?query=avg_cpu_usage\{uuid=\"1481510\"\}&time=1676990946" > "${fixture_output}"
     ./bin/pyro_requestor -url "http://localhost:${port2}/querier.v1.QuerierService/SelectMergeStacktraces" -username usr1 -cluster-id slurm-1 -uuid 1481510 -start 1676990946000 >> "${fixture_output}"
 
   elif [[ "${scenario}" = "lb-allow-user-query-api" ]] 
   then
-    export PATH="${GOBIN:-}:${PATH}"
-    prometheus \
-      --config.file pkg/lb/testdata/prometheus.yml \
-      --storage.tsdb.path "${tmpdir}" \
-      --storage.tsdb.retention.time 10y \
-      --log.level="debug" >> "${logfile}" 2>&1 &
-    PROMETHEUS_PID=$!
-
-    waitport "9090"
-
-    ./bin/mock_servers pyro os-compute os-identity >> "${logfile}" 2>&1 &
+    ./bin/mock_servers prom pyro os-compute os-identity >> "${logfile}" 2>&1 &
     MOCK_SERVERS_PID=$!
 
     waitport "4040"
     waitport "8080"
     waitport "7070"
+    waitport "9090"
 
     # Copy config file to tmpdir
     cp pkg/api/testdata/config.yml "${tmpdir}/config.yml"
@@ -1057,30 +998,21 @@ then
       --log.level="debug" >> "${logfile}" 2>&1 &
     LB_PID=$!
 
-    echo "${PROMETHEUS_PID} ${MOCK_SERVERS_PID} ${CEEMS_API_PID} ${LB_PID}" > "${pidfile}"
+    echo "${MOCK_SERVERS_PID} ${CEEMS_API_PID} ${LB_PID}" > "${pidfile}"
 
     waitport "${port}"
     waitport "${port2}"
 
-    get -H "X-Grafana-User: usr1" -H "X-Ceems-Cluster-Id: slurm-0" "127.0.0.1:${port}/api/v1/query?query=foo\{uuid=\"1479763\"\}&time=1645450627" > "${fixture_output}"
+    get -H "X-Grafana-User: usr1" -H "X-Ceems-Cluster-Id: slurm-0" "127.0.0.1:${port}/api/v1/query?query=avg_cpu_usage\{uuid=\"1479763\"\}&time=1645450627" > "${fixture_output}"
     ./bin/pyro_requestor -url "http://localhost:${port2}/querier.v1.QuerierService/SelectMergeStacktraces" -username usr1 -cluster-id slurm-0 -uuid 1479763 -start 1645450627000 >> "${fixture_output}"
 
   elif [[ "${scenario}" = "lb-allow-admin-query" ]] 
   then
-    export PATH="${GOBIN:-}:${PATH}"
-    prometheus \
-      --config.file pkg/lb/testdata/prometheus.yml \
-      --storage.tsdb.path "${tmpdir}" \
-      --storage.tsdb.retention.time 10y \
-      --log.level="debug" >> "${logfile}" 2>&1 &
-    PROMETHEUS_PID=$!
-
-    waitport "9090"
-
-    ./bin/mock_servers pyro >> "${logfile}" 2>&1 &
+    ./bin/mock_servers prom pyro >> "${logfile}" 2>&1 &
     MOCK_SERVERS_PID=$!
 
     waitport "4040"
+    waitport "9090"
 
     ./bin/ceems_lb \
       --config.file pkg/lb/testdata/config-db.yml \
@@ -1089,12 +1021,12 @@ then
       --log.level="debug" >> "${logfile}" 2>&1 &
     LB_PID=$!
 
-    echo "${PROMETHEUS_PID} ${MOCK_SERVERS_PID} ${LB_PID}" > "${pidfile}"
+    echo "${MOCK_SERVERS_PID} ${LB_PID}" > "${pidfile}"
 
     waitport "${port}"
     waitport "${port2}"
 
-    get -H "X-Grafana-User: grafana" -H "X-Ceems-Cluster-Id: slurm-1" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d "query=foo{uuid=\"1479765\"}" "127.0.0.1:${port}/api/v1/query" > "${fixture_output}"
+    get -H "X-Grafana-User: grafana" -H "X-Ceems-Cluster-Id: slurm-1" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d "query=avg_cpu_usage{uuid=\"1479765\"}" "127.0.0.1:${port}/api/v1/query" > "${fixture_output}"
     ./bin/pyro_requestor -url "http://localhost:${port2}/querier.v1.QuerierService/SelectMergeStacktraces" -username grafana -cluster-id slurm-1 -uuid 1479765 -start 1645450627000 >> "${fixture_output}"
 
   elif [[ "${scenario}" = "lb-auth" ]] 
@@ -1120,7 +1052,7 @@ then
 
     waitport "${port}"
 
-    get -H "X-Grafana-User: usr1" -H "X-Ceems-Cluster-Id: slurm-1" "127.0.0.1:${port}/api/v1/status/config" > "${fixture_output}"
+    get -H "X-Grafana-User: usr1" -H "X-Ceems-Cluster-Id: slurm-0" "127.0.0.1:${port}/api/v1/query?query=avg_cpu_usage\{uuid=\"1479763\"\}&time=1645450627" > "${fixture_output}"
   fi
 elif [[ "${scenario}" =~ ^"redfish" ]]
 then

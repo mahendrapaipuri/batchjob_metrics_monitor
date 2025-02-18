@@ -3,18 +3,17 @@ package backend
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/mahendrapaipuri/ceems/pkg/lb/base"
 	"github.com/mahendrapaipuri/ceems/pkg/tsdb"
-	"github.com/prometheus/common/model"
+	"github.com/prometheus/common/config"
 )
 
 // tsdbServer implements a given backend TSDB server.
@@ -27,45 +26,48 @@ type tsdbServer struct {
 	lastUpdate      time.Time
 	updateInterval  time.Duration
 	reverseProxy    *httputil.ReverseProxy
-	basicAuthHeader string
-	client          *http.Client
+	client          *tsdb.Client
 	logger          *slog.Logger
 }
 
 // NewTSDB returns an instance of backend TSDB server.
-func NewTSDB(webURL *url.URL, p *httputil.ReverseProxy, logger *slog.Logger) Server {
-	// Create a client
-	tsdbClient := &http.Client{Timeout: 2 * time.Second}
+func NewTSDB(c base.ServerConfig, logger *slog.Logger) (Server, error) {
+	webURL, err := url.Parse(c.Web.URL)
+	if err != nil {
+		return nil, err
+	}
 
-	// Retrieve basic auth username and password if exists
-	var basicAuthHeader string
+	// Create a HTTP roundtripper
+	httpRoundTripper, err := config.NewRoundTripperFromConfig(c.Web.HTTPClientConfig, "ceems_lb", config.WithUserAgent("ceems_lb/"+webURL.Host))
+	if err != nil {
+		return nil, err
+	}
 
-	username := webURL.User.Username()
-	password, exists := webURL.User.Password()
+	// Setup reverse proxy
+	rp := httputil.NewSingleHostReverseProxy(webURL)
+	rp.ModifyResponse = PromResponseModifier(c.FilterLabels) //nolint:bodyclose
+	rp.Transport = httpRoundTripper
 
-	if exists {
-		auth := fmt.Sprintf("%s:%s", username, password)
-		base64Auth := base64.StdEncoding.EncodeToString([]byte(auth))
-		basicAuthHeader = "Basic " + base64Auth
-
-		logger.Debug("Basic auth configured for backend TSDB server", "backend", webURL.Redacted())
+	// Create a new API client
+	client, err := tsdb.New(webURL.String(), c.Web.HTTPClientConfig, logger.With("subsystem", "tsdb"))
+	if err != nil {
+		return nil, err
 	}
 
 	// Make server struct
 	server := &tsdbServer{
-		url:             webURL,
-		alive:           true,
-		reverseProxy:    p,
-		basicAuthHeader: basicAuthHeader,
-		updateInterval:  3 * time.Hour,
-		client:          tsdbClient,
-		logger:          logger,
+		url:            webURL,
+		alive:          true,
+		reverseProxy:   rp,
+		updateInterval: 3 * time.Hour,
+		client:         client,
+		logger:         logger,
 	}
 
 	// Update retention period
 	server.RetentionPeriod()
 
-	return server
+	return server, nil
 }
 
 // String returns name/web URL backend TSDB server.
@@ -77,7 +79,7 @@ func (b *tsdbServer) String() string {
 	return "No backend found"
 }
 
-// Returns the retention period of backend TSDB server.
+// RetentionPeriod is the retention period of backend TSDB server.
 func (b *tsdbServer) RetentionPeriod() time.Duration {
 	b.mux.RLock()
 	retentionPeriod := b.retentionPeriod
@@ -108,7 +110,7 @@ func (b *tsdbServer) RetentionPeriod() time.Duration {
 	return retentionPeriod
 }
 
-// Returns current number of active connections.
+// ActiveConnections is current number of active connections.
 func (b *tsdbServer) ActiveConnections() int {
 	b.mux.RLock()
 	connections := b.connections
@@ -117,14 +119,14 @@ func (b *tsdbServer) ActiveConnections() int {
 	return connections
 }
 
-// Sets the backend TSDB server as alive.
+// SetAlive sets the backend TSDB server as alive.
 func (b *tsdbServer) SetAlive(alive bool) {
 	b.mux.Lock()
 	b.alive = alive
 	b.mux.Unlock()
 }
 
-// Returns if backend TSDB server is alive.
+// IsAlive returns if backend TSDB server is alive.
 func (b *tsdbServer) IsAlive() bool {
 	b.mux.RLock()
 	alive := b.alive
@@ -133,27 +135,23 @@ func (b *tsdbServer) IsAlive() bool {
 	return alive
 }
 
-// Returns URL of backend TSDB server.
+// URL of backend TSDB server.
 func (b *tsdbServer) URL() *url.URL {
 	return b.url
 }
 
-// Serves the request by the backend TSDB server.
+// ReverseProxy is reverse proxy of backend TSDB server.
+func (b *tsdbServer) ReverseProxy() *httputil.ReverseProxy {
+	return b.reverseProxy
+}
+
+// Serve the request by the backend TSDB server.
 func (b *tsdbServer) Serve(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		b.mux.Lock()
 		b.connections--
 		b.mux.Unlock()
 	}()
-
-	// Request header at this point will contain basic auth header of LB
-	// If backend server has basic auth as well, we need to swap it to the
-	// one from backend server
-	if b.basicAuthHeader != "" {
-		// Check if basic Auth header already exists and remove it
-		r.Header.Del("Authorization")
-		r.Header.Add("Authorization", b.basicAuthHeader)
-	}
 
 	b.mux.Lock()
 	b.connections++
@@ -167,46 +165,15 @@ func (b *tsdbServer) fetchRetentionPeriod() (time.Duration, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	// Make a API request to TSDB
-	data, err := tsdb.Request(ctx, b.url.JoinPath("api/v1/status/runtimeinfo").String(), b.client)
-	if err != nil {
-		return b.retentionPeriod, fmt.Errorf("failed to make API request to backend: %w", err)
-	}
+	var period time.Duration
 
-	// Parse runtime config and get storageRetention
-	runtimeData, ok := data.(map[string]interface{})
-	if !ok {
-		return b.retentionPeriod, ErrTypeAssertion
-	}
-
-	// Use an initial value so that even if we do not find it
-	// in runtime config, we return a sane default
-	period := model.Duration(b.retentionPeriod)
-
-	for k, v := range runtimeData {
-		if k == "storageRetention" {
-			vString, ok := v.(string)
-			if !ok {
-				return time.Duration(period), ErrTypeAssertion
-			}
-
-			// If storageRetention is set to duration ONLY, we can consider it as
-			// retention period
-			if period, err = model.ParseDuration(strings.TrimSpace(vString)); err == nil {
-				return time.Duration(period), nil
-			}
-
-			// If storageRetention is set to size or time and size, we need to get
-			// "actual" retention period
-			for _, retentionString := range strings.Split(vString, "or") {
-				period, err = model.ParseDuration(strings.TrimSpace(retentionString))
-				if err != nil {
-					continue
-				}
-
-				break
-			}
-		}
+	// For first update, get retention period from settings
+	if b.retentionPeriod == 0 {
+		// Get Prometheus settings
+		settings := b.client.Settings(ctx)
+		period = settings.RetentionPeriod
+	} else {
+		period = b.retentionPeriod
 	}
 
 	// If both retention storage and retention period are set,
@@ -228,72 +195,43 @@ func (b *tsdbServer) fetchRetentionPeriod() (time.Duration, error) {
 	// Make query parameters
 	// When period is zero (during very first update) use a sufficiently
 	// long range of 10 years to get retention period
-	if period == 0 {
-		period = model.Duration(10 * 365 * 24 * time.Hour)
+	//
+	// Use an initial value so that even if we do not find it
+	// in runtime config, we return a sane default
+	queryPeriod := period
+	if queryPeriod == 0 {
+		queryPeriod = 10 * 365 * 24 * time.Hour
 	}
 
-	step := time.Duration(period) / 5000
+	// Make a range query
+	query := fmt.Sprintf(`up{instance="%s:%s"}`, b.url.Hostname(), b.url.Port())
+	if result, err := b.client.RangeQuery(
+		ctx,
+		query,
+		time.Now().Add(-queryPeriod).UTC(),
+		time.Now().UTC(),
+		queryPeriod/5000,
+	); err == nil {
+		for metric, values := range result {
+			if metric == "up" {
+				// We are updating retention period only at a frequency set by
+				// updateInterval. This means there is no guarantee that the
+				// data until next update is present in the current TSDB.
+				// So we need to reduce the actual retention period by the update
+				// interval.
+				// Here we reduce twice the update interval just to be
+				// in a safe land
+				t := int64(values[0].Timestamp)
+				actualRetentionPeriod := (time.Since(time.UnixMilli(t)) - 2*b.updateInterval).Truncate(time.Hour)
 
-	urlValues := url.Values{
-		"query": []string{fmt.Sprintf(`up{instance="%s:%s"}`, b.url.Hostname(), b.url.Port())},
-		"start": []string{time.Now().Add(-time.Duration(period)).UTC().Format(time.RFC3339Nano)},
-		"end":   []string{time.Now().UTC().Format(time.RFC3339Nano)},
-		"step":  []string{step.Truncate(time.Second).String()},
-	}
-
-	queryURL := fmt.Sprintf("%s?%s", b.url.JoinPath("api/v1/query_range").String(), urlValues.Encode())
-
-	data, err = tsdb.Request(ctx, queryURL, b.client)
-	if err != nil {
-		return time.Duration(period), nil
-	}
-
-	queryData, ok := data.(map[string]interface{})
-	if !ok {
-		return time.Duration(period), nil
-	}
-
-	// Check if results is not nil before converting it to slice of interfaces
-	r, exists := queryData["result"]
-	if !exists || r == nil {
-		return time.Duration(period), nil
-	}
-
-	var results, values []interface{}
-
-	var result map[string]interface{}
-
-	if results, ok = r.([]interface{}); !ok {
-		return time.Duration(period), nil
-	}
-
-	for _, res := range results {
-		if result, ok = res.(map[string]interface{}); !ok {
-			continue
-		}
-
-		if val, exists := result["values"]; exists {
-			if values, ok = val.([]interface{}); ok && len(values) > 0 {
-				if v, ok := values[0].([]interface{}); ok && len(v) > 0 {
-					if t, ok := v[0].(float64); ok {
-						// We are updating retention period only at a frequency set by
-						// updateInterval. This means there is no guarantee that the
-						// data until next update is present in the current TSDB.
-						// So we need to reduce the actual retention period by the update
-						// interval.
-						// Here we reduce twice the update interval just to be
-						// in a safe land
-						actualRetentionPeriod := (time.Since(time.Unix(int64(t), 0)) - 2*b.updateInterval).Truncate(time.Hour)
-						if actualRetentionPeriod < 0 {
-							actualRetentionPeriod = time.Since(time.Unix(int64(t), 0))
-						}
-
-						return actualRetentionPeriod, nil
-					}
+				if actualRetentionPeriod < 0 {
+					actualRetentionPeriod = time.Since(time.UnixMilli(t))
 				}
+
+				return actualRetentionPeriod, nil
 			}
 		}
 	}
 
-	return time.Duration(period), nil
+	return period, nil
 }

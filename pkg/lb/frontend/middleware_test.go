@@ -119,7 +119,7 @@ func setupMiddlewareWithDB(tmpDir string) (http.Handler, error) {
 		clusterIDs:    []string{"rm-0", "rm-1"},
 		ceems:         ceems{db: db},
 		parseRequest:  parseTSDBRequest,
-		pathsACLRegex: regexpTSDBRestrictedPath,
+		pathsACLRegex: regexpAllowedTSDBResources,
 	}
 
 	// create a handler to use as "next" which will verify the request
@@ -146,7 +146,7 @@ func setupMiddlewareWithAPI(tmpDir string) (http.Handler, error) {
 		clusterIDs:    []string{"rm-0", "rm-1"},
 		ceems:         ceems{webURL: ceemsURL, client: http.DefaultClient},
 		parseRequest:  parseTSDBRequest,
-		pathsACLRegex: regexpTSDBRestrictedPath,
+		pathsACLRegex: regexpAllowedTSDBResources,
 	}
 
 	// create a handler to use as "next" which will verify the request

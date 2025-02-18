@@ -31,9 +31,6 @@ var (
 	ErrUnknownClusterID = errors.New("unknown cluster ID")
 )
 
-// RetryContextKey is the key used to set context value for retry.
-type RetryContextKey struct{}
-
 // ReqParamsContextKey is the key used to set context value for request parameters.
 type ReqParamsContextKey struct{}
 

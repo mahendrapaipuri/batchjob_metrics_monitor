@@ -12,16 +12,17 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httputil"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mahendrapaipuri/ceems/pkg/api/cli"
+	ceems_db "github.com/mahendrapaipuri/ceems/pkg/api/db"
 	ceems_api_http "github.com/mahendrapaipuri/ceems/pkg/api/http"
 	"github.com/mahendrapaipuri/ceems/pkg/api/models"
 	"github.com/mahendrapaipuri/ceems/pkg/lb/backend"
+	"github.com/mahendrapaipuri/ceems/pkg/lb/base"
 	"github.com/mahendrapaipuri/ceems/pkg/lb/serverpool"
 	"github.com/mahendrapaipuri/ceems/pkg/tsdb"
 	"github.com/stretchr/testify/assert"
@@ -60,15 +61,39 @@ COMMIT;`
 
 func dummyTSDBServer(clusterID string) *httptest.Server {
 	// Start test server
-	expected := tsdb.Response[any]{
+	expectedConfig := tsdb.Response[any]{
+		Status: "success",
+		Data: map[string]string{
+			"yaml": "global:\n  scrape_interval: 15s\n  scrape_timeout: 10s",
+		},
+	}
+
+	expectedFlags := tsdb.Response[any]{
+		Status: "success",
+		Data: map[string]interface{}{
+			"query.lookback-delta": "5m",
+			"query.max-samples":    "50000000",
+			"query.timeout":        "2m",
+		},
+	}
+
+	expectedRuntimeInfo := tsdb.Response[any]{
 		Status: "success",
 		Data: map[string]string{
 			"storageRetention": "30d",
 		},
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "runtimeinfo") {
-			if err := json.NewEncoder(w).Encode(&expected); err != nil {
+		if strings.HasSuffix(r.URL.Path, "config") {
+			if err := json.NewEncoder(w).Encode(&expectedConfig); err != nil {
+				w.Write([]byte("KO"))
+			}
+		} else if strings.HasSuffix(r.URL.Path, "flags") {
+			if err := json.NewEncoder(w).Encode(&expectedFlags); err != nil {
+				w.Write([]byte("KO"))
+			}
+		} else if strings.HasSuffix(r.URL.Path, "runtimeinfo") {
+			if err := json.NewEncoder(w).Encode(&expectedRuntimeInfo); err != nil {
 				w.Write([]byte("KO"))
 			}
 		} else {
@@ -79,17 +104,60 @@ func dummyTSDBServer(clusterID string) *httptest.Server {
 	return server
 }
 
+func TestNewFrontend(t *testing.T) {
+	tmpDir := t.TempDir()
+	err := setupClusterIDsDB(tmpDir)
+	require.NoError(t, err, "failed to setup test DB")
+
+	clusterID := "default"
+
+	// Backends
+	dummyServer1 := dummyTSDBServer(clusterID)
+	defer dummyServer1.Close()
+
+	backend1, err := backend.NewTSDB(base.ServerConfig{Web: models.WebConfig{URL: dummyServer1.URL}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+
+	// Start manager
+	manager, err := serverpool.New("resource-based", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+
+	manager.Add(clusterID, backend1)
+
+	// make minimal config
+	config := &Config{
+		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Manager: manager,
+		Address: "localhost:9030", // dummy address
+		APIServer: cli.CEEMSAPIServerConfig{
+			Data: ceems_db.DataConfig{Path: tmpDir},
+		},
+	}
+
+	// New load balancer
+	lb, err := New(config)
+	require.NoError(t, err)
+
+	var errStart error
+	go func() {
+		errStart = lb.Start()
+	}()
+	require.NoError(t, errStart)
+
+	// Shutdown server
+	err = lb.Shutdown(context.Background())
+	require.NoError(t, err)
+}
+
 func TestNewFrontendSingleGroup(t *testing.T) {
 	clusterID := "default"
 
 	// Backends
 	dummyServer1 := dummyTSDBServer(clusterID)
 	defer dummyServer1.Close()
-	backend1URL, err := url.Parse(dummyServer1.URL)
-	require.NoError(t, err)
 
-	rp1 := httputil.NewSingleHostReverseProxy(backend1URL)
-	backend1 := backend.NewTSDB(backend1URL, rp1, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	backend1, err := backend.NewTSDB(base.ServerConfig{Web: models.WebConfig{URL: dummyServer1.URL}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
 
 	// Start manager
 	manager, err := serverpool.New("resource-based", slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -154,10 +222,10 @@ func TestNewFrontendSingleGroup(t *testing.T) {
 		responseRecorder := httptest.NewRecorder()
 		http.HandlerFunc(lb.Serve).ServeHTTP(responseRecorder, newReq)
 
-		assert.Equal(t, responseRecorder.Code, test.code)
+		assert.Equal(t, responseRecorder.Code, test.code, test.name)
 
 		if test.response {
-			assert.Equal(t, responseRecorder.Body.String(), clusterID)
+			assert.Equal(t, responseRecorder.Body.String(), clusterID, test.name)
 		}
 	}
 
@@ -181,20 +249,16 @@ func TestNewFrontendTwoGroups(t *testing.T) {
 	// Backends for group 1
 	dummyServer1 := dummyTSDBServer("rm-0")
 	defer dummyServer1.Close()
-	backend1URL, err := url.Parse(dummyServer1.URL)
-	require.NoError(t, err)
 
-	rp1 := httputil.NewSingleHostReverseProxy(backend1URL)
-	backend1 := backend.NewTSDB(backend1URL, rp1, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	backend1, err := backend.NewTSDB(base.ServerConfig{Web: models.WebConfig{URL: dummyServer1.URL}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
 
 	// Backends for group 2
 	dummyServer2 := dummyTSDBServer("rm-1")
 	defer dummyServer2.Close()
-	backend2URL, err := url.Parse(dummyServer2.URL)
-	require.NoError(t, err)
 
-	rp2 := httputil.NewSingleHostReverseProxy(backend2URL)
-	backend2 := backend.NewTSDB(backend2URL, rp2, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	backend2, err := backend.NewTSDB(base.ServerConfig{Web: models.WebConfig{URL: dummyServer2.URL}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
 
 	// Start manager
 	manager, err := serverpool.New("resource-based", slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -305,11 +369,9 @@ func TestValidateClusterIDsWithDBPass(t *testing.T) {
 	// Backends for group 1
 	dummyServer := dummyTSDBServer("slurm-0")
 	defer dummyServer.Close()
-	backendURL, err := url.Parse(dummyServer.URL)
-	require.NoError(t, err)
 
-	rp := httputil.NewSingleHostReverseProxy(backendURL)
-	backend := backend.NewTSDB(backendURL, rp, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	backend, err := backend.NewTSDB(base.ServerConfig{Web: models.WebConfig{URL: dummyServer.URL}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
 
 	// Start manager
 	manager, err := serverpool.New("resource-based", slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -342,11 +404,9 @@ func TestValidateClusterIDsWithDBFail(t *testing.T) {
 	// Backends for group 1
 	dummyServer := dummyTSDBServer("slurm-0")
 	defer dummyServer.Close()
-	backendURL, err := url.Parse(dummyServer.URL)
-	require.NoError(t, err)
 
-	rp := httputil.NewSingleHostReverseProxy(backendURL)
-	backend := backend.NewTSDB(backendURL, rp, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	backend, err := backend.NewTSDB(base.ServerConfig{Web: models.WebConfig{URL: dummyServer.URL}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
 
 	// Start manager
 	manager, err := serverpool.New("resource-based", slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -395,11 +455,9 @@ func TestValidateClusterIDsWithAPIPass(t *testing.T) {
 	// Backends for group 1
 	dummyServer := dummyTSDBServer("slurm-0")
 	defer dummyServer.Close()
-	backendURL, err := url.Parse(dummyServer.URL)
-	require.NoError(t, err)
 
-	rp := httputil.NewSingleHostReverseProxy(backendURL)
-	backend := backend.NewTSDB(backendURL, rp, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	backend, err := backend.NewTSDB(base.ServerConfig{Web: models.WebConfig{URL: dummyServer.URL}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
 
 	// Start manager
 	manager, err := serverpool.New("resource-based", slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -440,11 +498,9 @@ func TestValidateClusterIDsWithAPIFail(t *testing.T) {
 	// Backends for group 1
 	dummyServer := dummyTSDBServer("slurm-0")
 	defer dummyServer.Close()
-	backendURL, err := url.Parse(dummyServer.URL)
-	require.NoError(t, err)
 
-	rp := httputil.NewSingleHostReverseProxy(backendURL)
-	backend := backend.NewTSDB(backendURL, rp, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	backend, err := backend.NewTSDB(base.ServerConfig{Web: models.WebConfig{URL: dummyServer.URL}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
 
 	// Start manager
 	manager, err := serverpool.New("resource-based", slog.New(slog.NewTextHandler(io.Discard, nil)))

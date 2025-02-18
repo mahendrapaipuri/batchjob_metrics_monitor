@@ -35,37 +35,46 @@ const (
 	ceemsClusterIDHeader = "X-Ceems-Cluster-Id"
 )
 
-// Restricted paths.
+// Allowed resources.
 // No need to check caps as Prometheus do not allow
 // capitalised query names.
 //
-// For Prometheus following end points are controlled
+// For Prometheus following resources are allowed
 // - query
 // - query_range
 // - labels
 // - values
 // - series
 //
-// For Pyroscope following end points are controlled
-// - SelectMergeStacktraces.
+// For Pyroscope following resources are allowed
+// - SelectMergeStacktraces
+// - LabelNames
+// - LabelValues
+//
+// Not sure if we need to allow more resources for Pyroscope
+// So of the resources that need to checked can be found here:
+// https://github.com/grafana/pyroscope/blob/b4125b77f44444eb413244d5e56d73a04b1c1def/tools/k6/tests/reads.js#L37-L57
+// Maybe we can make it configurable by using below values as default.
 var (
-	restrictedTSDBPathSuffices = []string{
+	allowedTSDBResources = []string{
 		"query",
 		"query_range",
 		"labels",
 		"series",
 		"values",
 	}
-	restrictedPyroPathSuffices = []string{
+	allowedPyroResources = []string{
 		"SelectMergeStacktraces",
+		"LabelNames",
+		"LabelValues",
 	}
 )
 
 var (
 	// Regex to match path suffix to apply middleware.
-	regexpURLPaths           = "/([/]*(%s)?/?)(?:$)"
-	regexpTSDBRestrictedPath = regexp.MustCompile(fmt.Sprintf(regexpURLPaths, strings.Join(restrictedTSDBPathSuffices, "|")))
-	regexpPyroRestrictedPath = regexp.MustCompile(fmt.Sprintf(regexpURLPaths, strings.Join(restrictedPyroPathSuffices, "|")))
+	regexpURLPaths             = "/([/]*(%s)?/?)(?:$)"
+	regexpAllowedTSDBResources = regexp.MustCompile(fmt.Sprintf(regexpURLPaths, strings.Join(allowedTSDBResources, "|")))
+	regexpAllowedPyroResources = regexp.MustCompile(fmt.Sprintf(regexpURLPaths, strings.Join(allowedPyroResources, "|")))
 
 	// Regex that will match unit's UUIDs
 	// Dont use greedy matching to avoid capturing gpuuuid label
@@ -167,10 +176,10 @@ func newAuthMiddleware(c *Config) (*authenticationMiddleware, error) {
 	switch c.LBType {
 	case base.PromLB:
 		amw.parseRequest = parseTSDBRequest
-		amw.pathsACLRegex = regexpTSDBRestrictedPath
+		amw.pathsACLRegex = regexpAllowedTSDBResources
 	case base.PyroLB:
 		amw.parseRequest = parsePyroRequest
-		amw.pathsACLRegex = regexpPyroRestrictedPath
+		amw.pathsACLRegex = regexpAllowedPyroResources
 	}
 
 	return amw, nil
@@ -235,59 +244,17 @@ func (amw *authenticationMiddleware) isUserUnit(
 // Middleware function, which will be called for each request.
 func (amw *authenticationMiddleware) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var loggedUser string
-
 		reqParams := &ReqParams{}
 
 		var err error
 
-		// Get cluster id from X-Ceems-Cluster-Id header
-		// This is most important and request parameter that we need
-		// to proxy request. Rest of them are optional
-		reqParams.clusterID = r.Header.Get(ceemsClusterIDHeader)
-
-		// Verify clusterID is in list of valid cluster IDs
-		if !slices.Contains(amw.clusterIDs, reqParams.clusterID) {
-			// Write an error and stop the handler chain
-			w.WriteHeader(http.StatusBadRequest)
-
-			response := ceems_api.Response[any]{
-				Status:    "error",
-				ErrorType: "bad_request",
-				Error:     "invalid cluster ID",
-			}
-			if err := json.NewEncoder(w).Encode(&response); err != nil {
-				amw.logger.Error("Failed to encode response", "err", err)
-				w.Write([]byte("KO"))
-			}
-
-			return
-		}
-
-		// Apply middleware only for restricted endpoints
-		if !amw.pathsACLRegex.MatchString(r.URL.Path) {
-			goto end
-		}
-
-		// If ceems url or db is not configured, pass through. There is nothing
-		// to check here
-		if amw.ceems.webURL == nil && amw.ceems.db == nil {
-			goto end
-		}
-
-		// Clone request, parse query params and set them in request context
-		// This will ensure we set query params in request's context always
-		err = amw.parseRequest(reqParams, r)
-		if err != nil {
-			amw.logger.Error("Failed to parse query in the request", "err", err)
-		}
-
+		// Check if user header exists
 		// Remove any X-Admin-User header or X-Logged-User if passed
 		r.Header.Del(adminUserHeader)
 		r.Header.Del(loggedUserHeader)
 
 		// Check if username header is available
-		loggedUser = r.Header.Get(grafanaUserHeader)
+		loggedUser := r.Header.Get(grafanaUserHeader)
 		if loggedUser == "" {
 			amw.logger.Error("Grafana user Header not found. Denying authentication")
 
@@ -311,6 +278,63 @@ func (amw *authenticationMiddleware) Middleware(next http.Handler) http.Handler 
 
 		// Set logged user header
 		r.Header.Set(loggedUserHeader, loggedUser)
+
+		// Get cluster id from X-Ceems-Cluster-Id header
+		// This is most important and request parameter that we need
+		// to proxy request. Rest of them are optional
+		reqParams.clusterID = r.Header.Get(ceemsClusterIDHeader)
+
+		// Verify clusterID is in list of valid cluster IDs
+		if !slices.Contains(amw.clusterIDs, reqParams.clusterID) {
+			amw.logger.Error("ClusterID header not found. Bad request", "logged_user", loggedUser)
+
+			// Write an error and stop the handler chain
+			w.WriteHeader(http.StatusBadRequest)
+
+			response := ceems_api.Response[any]{
+				Status:    "error",
+				ErrorType: "bad_request",
+				Error:     "invalid cluster ID",
+			}
+			if err := json.NewEncoder(w).Encode(&response); err != nil {
+				amw.logger.Error("Failed to encode response", "err", err)
+				w.Write([]byte("KO"))
+			}
+
+			return
+		}
+
+		// Allow only white listed resources and forbid all others
+		if !amw.pathsACLRegex.MatchString(r.URL.Path) {
+			amw.logger.Error("Forbidden resource", "logged_user", loggedUser, "resource", r.URL.Path)
+
+			// Write an error and stop the handler chain
+			w.WriteHeader(http.StatusForbidden)
+
+			response := ceems_api.Response[any]{
+				Status:    "error",
+				ErrorType: "forbidden",
+				Error:     "user do not have permissions to this resource",
+			}
+			if err := json.NewEncoder(w).Encode(&response); err != nil {
+				amw.logger.Error("Failed to encode response", "err", err)
+				w.Write([]byte("KO"))
+			}
+
+			return
+		}
+
+		// If ceems url or db is not configured, pass through. There is nothing
+		// to check here
+		if amw.ceems.webURL == nil && amw.ceems.db == nil {
+			goto end
+		}
+
+		// Clone request, parse query params and set them in request context
+		// This will ensure we set query params in request's context always
+		if err = amw.parseRequest(reqParams, r); err != nil {
+			amw.logger.Error("Failed to parse query in the request", "logged_user", loggedUser, "err", err)
+		}
 
 		// Check if user is querying for his/her own compute units by looking to DB
 		if !amw.isUserUnit(

@@ -10,6 +10,8 @@ PROMTOOL_VERSION ?= 3.0.1
 PROMTOOL_URL     ?= https://github.com/prometheus/prometheus/releases/download/v$(PROMTOOL_VERSION)/prometheus-$(PROMTOOL_VERSION).$(GO_BUILD_PLATFORM).tar.gz
 PROMTOOL         ?= $(FIRST_GOPATH)/bin/promtool
 
+GOLANGCI_LINT_VERSION ?= v1.63.4
+
 OWID_URL         ?= https://ourworldindata.org/grapher/carbon-intensity-electricity.csv?v=1&csvType=full&useColumnShortNames=true
 
 PREFIX           := $(shell pwd)/bin
@@ -52,7 +54,7 @@ ifeq ($(CGO_BUILD), 1)
 	pkgs := ./pkg/sqlite3 ./pkg/api/cli \
 			./pkg/api/db ./pkg/api/helper \
 			./pkg/api/resource ./pkg/api/resource/slurm ./pkg/api/resource/openstack \
-			./pkg/api/updater \
+			./pkg/api/updater ./pkg/api/updater/tsdb \
 			./pkg/api/http ./cmd/ceems_api_server \
 			./pkg/lb/backend ./pkg/lb/cli \
 			./pkg/lb/frontend ./pkg/lb/serverpool \
